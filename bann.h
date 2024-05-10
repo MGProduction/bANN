@@ -38,16 +38,6 @@ typedef unsigned char byte;
 
 // ---------------------------------------------------------------------
 
-#define bann_autooptimize_off 0
-#define bann_autooptimize_on  1
-
-#define bann_activation_sigmoid   0
-#define bann_activation_linear    1
-#define bann_activation_relu      2
-#define bann_activation_tanh      3
-
-// ---------------------------------------------------------------------
-
 typedef real (*bact)(real f);
 
 // matrix between layers
@@ -85,7 +75,17 @@ typedef struct{
 void bann_new(bann*net,int input,int hidden,int hiddencount,int output);
 void bann_delete(bann*net);
 
+#define bann_activation_sigmoid   0
+#define bann_activation_linear    1
+#define bann_activation_relu      2
+#define bann_activation_tanh      3
+
 void bann_setweightactivation(bann*net,int layernumber,int actmethod);
+
+#define bann_autooptimize_off 0
+#define bann_autooptimize_on  1
+
+void bann_setlearningrate(bann*net,real learningrate,int optimizemode);
 
 real*bann_predict(bann*net,const real*input);
 void bann_train(bann*net,const real*input,const real*output);
@@ -98,6 +98,13 @@ int  bann_read(bann*net,const char*file);
 // ---------------------------------------------------------------------
 
 #if defined(BANN_IMPLEMENTATION)
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+#include <float.h>
+#include <assert.h>
 
 #if defined(BANN_DEBUG)
 int sanitycheck(real v)
