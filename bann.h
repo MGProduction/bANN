@@ -82,8 +82,9 @@ void bann_delete(bann*net);
 
 void bann_setweightactivation(bann*net,int layernumber,int actmethod);
 
-#define bann_autooptimize_off 0
-#define bann_autooptimize_on  1
+#define bann_autooptimize_off          0
+#define bann_autooptimize_auto         1
+#define bann_autooptimize_progressive  2
 
 void bann_setlearningrate(bann*net,real learningrate,int optimizemode);
 
