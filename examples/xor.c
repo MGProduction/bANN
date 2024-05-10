@@ -13,12 +13,11 @@ const real output[4] = {0, 1, 1, 0};
 int main()
 {
  bann N; 
- int      xor_maxepoch=512;
- int      e,v,cnt=0;
+ int      xor_maxepoch=8*1024;
+ int      e=0,v,cnt=0;
  real     err=0;
 
  bann_new(&N,2,2,1,1);
- bann_setlearningrate(&N,1.0f,bann_autooptimize_on);
 
  for(e=0;e<xor_maxepoch;e++)
   for(v=0;v<4;v++)
@@ -32,15 +31,17 @@ int main()
     cnt++;
     
     printf("e:%d v:%d err: %.2f \r",e,v,err/cnt);
+
    }
  printf("\n");
 
  for(v=0;v<4;v++)
   {
    bann_predict(&N,input[v]);   
-   printf("value %d: %.2f / %.2f\n",v+1,N.weights[1].o[0],output[v]);
+   printf("value %d: %1.f / %1.f\n",v+1,N.weights[1].o[0],output[v]);
   }
-
+ bann_write(&N,"bin/xor.bann",bann_float);
+ bann_write(&N,"bin/xor.bannQ",bann_8bit);
  bann_delete(&N); 
 
  return 1;

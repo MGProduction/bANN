@@ -14,8 +14,10 @@
 #define TESTING_IMAGES "bin/data/mnist/t10k-images.idx3-ubyte"
 #define TESTING_LABELS "bin/data/mnist/t10k-labels.idx1-ubyte"
 
-#define BANN_HIDDENSIZE    32
+#define BANN_HIDDENSIZE    64
 #define BANN_HIDDENNUMBER   1
+
+#define MAX_EPOCHS          4
 
 int bann_gethighestoutput(bann*net)
 {
@@ -91,7 +93,7 @@ int read_imagesets(const char*f1,const char*f2,int*pmnist_size,int*pmnist_sample
 int main()
 {
  bann          N; 
- int           epoch,max_epoch=8,sample,mnist_size,mnist_sample;
+ int           epoch,sample,mnist_size,mnist_sample;
  int          *idx;
  unsigned char*trainingset;
  unsigned char*trainingoutput;
@@ -105,7 +107,7 @@ int main()
   {
 
    bann_new(&N,mnist_size,BANN_HIDDENSIZE,BANN_HIDDENNUMBER,mnist_outputsize);
-   bann_setlearningrate(&N,1.0f,bann_autooptimize_on);
+   bann_setlearningrate(&N,1.0f,bann_autooptimize_auto);
 
 
    idx=(int*)malloc(mnist_sample*sizeof(int));
@@ -116,7 +118,7 @@ int main()
    input=(real*)malloc(sizeof(input[0])*mnist_size);
    output=(real*)malloc(sizeof(output[0])*mnist_outputsize);
 
-   for(epoch=0;epoch<max_epoch;epoch++)
+   for(epoch=0;epoch<MAX_EPOCHS;epoch++)
     {
      int good=0,bad=0;
 

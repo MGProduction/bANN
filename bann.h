@@ -310,9 +310,10 @@ void bann_new(bann*net,int input,int hidden,int hiddencount,int output)
  for(h=0;h<net->weightscount-2;h++)
   ptr=bann_setweight(net,l++,hidden,hidden,ptr,bann_activation_sigmoid,1);
  ptr=bann_setweight(net,l++,hidden,output,ptr,bann_activation_sigmoid,1);
+ // set learning rate in auto adjust mode
+ bann_setlearningrate(net,1.0f,bann_autooptimize_auto);
  // build sigmoid table
- bann_buildsigmoidcache();
- net->opt.learningrate=0.5f;
+ bann_buildsigmoidcache(); 
 }
 
 // bann execution
@@ -345,31 +346,54 @@ void bann_setlearningrate(bann*net,real learningrate,int optimizemode)
 
 void bann_optimize(bann*net,const real*output)
 {
- real err=0;
- int  l=net->weightscount-1,c;
- for(c=0;c<net->weights[l].outs;c++)
-  err+=0.5f*(output[c]-net->weights[l].o[c])*(output[c]-net->weights[l].o[c]);
- net->opt.errsum+=err;net->opt.errcnt++;
- if(net->opt.errcnt>255)
+ switch(net->opt.optimize)
+ {
+ case bann_autooptimize_auto:
   {
-   net->opt.errsum/=net->opt.errcnt;
-   if(net->opt.errsum>net->opt.preverrsum)
+   real err=0;
+   int  l=net->weightscount-1,c;
+   for(c=0;c<net->weights[l].outs;c++)
+    err+=0.5f*(output[c]-net->weights[l].o[c])*(output[c]-net->weights[l].o[c]);
+   net->opt.errsum+=err;net->opt.errcnt++;
+   if(net->opt.errcnt>256)
     {
-     net->opt.learningrate*=0.95f;
-     if(net->opt.learningrate<0.1f)
-      net->opt.learningrate=0.1f;
+     net->opt.errsum/=net->opt.errcnt;
+     if(net->opt.errsum>net->opt.preverrsum)
+      {
+       real expand=(net->opt.preverrsum/net->opt.errsum);
+       if(expand<0.75f) expand=0.75f;
+       net->opt.learningrate*=expand;
+       if(net->opt.learningrate<0.1f)
+        net->opt.learningrate=0.1f;
+      }
+     else
+     if(net->opt.errsum<net->opt.preverrsum)
+      {
+       real expand=(net->opt.preverrsum/net->opt.errsum);
+       if(expand>1.05f) expand=1.05f;
+       net->opt.learningrate*=expand;
+       if(net->opt.learningrate>1.0f)
+        net->opt.learningrate=1.0f;
+      }
+     net->opt.preverrsum=net->opt.errsum;
     }
-   else
-   if(net->opt.errsum<net->opt.preverrsum)
-    {
-     net->opt.learningrate*=1.05f;
-     if(net->opt.learningrate>1.0f)
-      net->opt.learningrate=1.0f;
-    }
-   net->opt.preverrsum=net->opt.errsum;
   }
+ break;
+ case bann_autooptimize_progressive:
+  net->opt.errcnt++;
+  if(net->opt.errcnt>16*1024)
+   {
+    net->opt.learningrate*=0.95f;
+    if(net->opt.learningrate<0.1f)
+     net->opt.learningrate=0.1f;
+    net->opt.errcnt=0;
+   }
+  break;
+ }
 }
 
+//#define bann_protect(a) {if(a<-10) a=-10; else if(a>10) a=10;}
+#define bann_protect(a) 
 // bann training
 void bann_train(bann*net,const real*input,const real*output)
 {
@@ -384,39 +408,58 @@ void bann_train(bann*net,const real*input,const real*output)
    real delta=0.0f;
    for(c=0;c<net->weights[l].outs;c++)
     {
-     real odelta=(net->weights[l].o[c]-output[c]) * net->weights[l].o[c] * (1.0f-net->weights[l].o[c]);
-     delta += odelta * nn_getweight(net,l,r,c);
-     net->weights[l].w[c*net->weights[l].ins+r] -= learningrate * odelta * net->weights[l-1].o[r];           
+     real error=(net->weights[l].o[c]-output[c]);
+     real derror=error * net->weights[l].o[c] * (1.0f-net->weights[l].o[c]);
+     
+     delta += derror * nn_getweight(net,l,r,c);
+     
+     net->weights[l].w[c*net->weights[l].ins+r] -= learningrate * derror * net->weights[l-1].o[r];           
+     bann_protect(net->weights[l].w[c*net->weights[l].ins+r])
+
      sanitycheck(nn_getweight(net,l,r,c));
     }
-   nn_setdelta(net,l,r,delta);
+   nn_setdelta(net,l,r,delta);   
    sanitycheck(net->weights[l].d[r]);
+
+   net->weights[l].bias[0] -= learningrate * nn_getdelta(net,l,c);
+   bann_protect(net->weights[l].bias[0])
   }
+ // ---
+ 
+
+ if(net->weights[l].bias[0]<-10) net->weights[l].bias[0]=-10; else if(net->weights[l].bias[0]>10) net->weights[l].bias[0]=10;
  // hidden till input 
  while(l--)
-  {
-   real bdelta=0;
+  {   
    for(c=0;c<net->weights[l].outs;c++)
     {
-     real delta=learningrate * nn_getdelta(net,l+1,c) * nn_getoutput(net,l,c) * (1.0f-nn_getoutput(net,l,c)),ndelta=0;
-     bdelta+=nn_getdelta(net,l+1,c);
+     real delta=learningrate * nn_getdelta(net,l+1,c) * nn_getoutput(net,l,c) * (1.0f-nn_getoutput(net,l,c)),ndelta=0;     
      for(r=0;r<net->weights[l].ins;r++)
       {      
        if(l==0)
-        net->weights[l].w[c*net->weights[l].ins+r] -= delta * input[r];
+        {
+         net->weights[l].w[c*net->weights[l].ins+r] -= delta * input[r];
+         bann_protect(net->weights[l].w[c*net->weights[l].ins+r])
+        }
        else
         {
          ndelta += nn_getdelta(net,l+1,c) * nn_getweight(net,l,r,c);
          net->weights[l].w[c*net->weights[l].ins+r] -= delta * net->weights[l-1].o[r];
+         bann_protect(net->weights[l].w[c*net->weights[l].ins+r])
         }     
        sanitycheck(net->weights[l].w[c*net->weights[l].outs+r]);
       }
-     if(l)
-      nn_setdelta(net,l,c,ndelta);
-    }
-   //net->weights[l].bias[0] -= learningrate * bdelta;
+     nn_setdelta(net,l,c,ndelta);
+
+     net->weights[l].bias[0] -= learningrate * nn_getdelta(net,l,c);
+     bann_protect(net->weights[l].bias[0])
+    }   
+   
+   // ---net->weights[l].bias[0] -= learningrate * nn_getdelta(net,l,0);   
+   // ---bann_protect(net->weights[l].bias[0])
+
   }
- if(net->opt.optimize==bann_autooptimize_on)
+ if(net->opt.optimize)
   bann_optimize(net,output);
 }
 
@@ -428,30 +471,57 @@ void bann_delete(bann*net)
 }
 
 // bann write
+int  bann_corewrite(bann*net,FILE*f,int way)
+{
+ int version=1,i;
+  fwrite("BANN",4,1,f);
+  fwrite(&version,sizeof(version),1,f);   
+  
+  fwrite(&net->opt.optimize,sizeof(net->opt.optimize),1,f);
+  fwrite(&net->opt.learningrate,sizeof(net->opt.learningrate),1,f);
+
+  fwrite(&net->linearsize,sizeof(net->linearsize),1,f);
+  fwrite(&way,sizeof(way),1,f);
+  if(way==bann_8bit)
+   {
+    int  i;
+    byte*blinear=(byte*)malloc(net->linearsize);
+    real maxf,minf,scale;
+    maxf=minf=net->linear[0];
+    for(i=1;i<net->linearsize;i++)
+     {
+      if(net->linear[i]>maxf)      maxf=net->linear[i];
+      if(net->linear[i]<minf)      minf=net->linear[i];
+     }
+    scale=(maxf-minf)/255;
+    for(i=0;i<net->linearsize;i++)
+     {
+      byte id=(byte)floor(0.5f+(net->linear[i]-minf)/(maxf-minf)*255);
+      blinear[i]=id;
+     }     
+    fwrite(&minf,sizeof(minf),1,f);fwrite(&scale,sizeof(scale),1,f);
+    fwrite(blinear,sizeof(blinear[0]),net->linearsize,f);
+    free(blinear);
+   }
+  else
+   fwrite(net->linear,sizeof(net->linear[0]),net->linearsize,f);
+
+  fwrite(&net->weightscount,sizeof(net->weightscount),1,f);
+  for(i=0;i<net->weightscount;i++)
+   {
+    fwrite(&net->weights[i].ins,sizeof(net->weights[i].ins),1,f);
+    fwrite(&net->weights[i].outs,sizeof(net->weights[i].outs),1,f);
+    fwrite(&net->weights[i].flags,sizeof(net->weights[i].flags),1,f);
+   }
+ return 1;
+}
 int  bann_write(bann*net,const char*file,int way)
 {
  FILE*f=fopen(file,"wb");
  if(f)
   {
-   int version=1,i;
-   fwrite("BANN",4,1,f);
-   fwrite(&version,sizeof(version),1,f);   
-   
-   fwrite(&net->opt.optimize,sizeof(net->opt.optimize),1,f);
-   fwrite(&net->opt.learningrate,sizeof(net->opt.learningrate),1,f);
-
-   fwrite(&net->linearsize,sizeof(net->linearsize),1,f);
-   fwrite(&way,sizeof(way),1,f);
-   fwrite(net->linear,sizeof(net->linear[0]),net->linearsize,f);
-
-   fwrite(&net->weightscount,sizeof(net->weightscount),1,f);
-   for(i=0;i<net->weightscount;i++)
-    {
-     fwrite(&net->weights[i].ins,sizeof(net->weights[i].ins),1,f);
-     fwrite(&net->weights[i].outs,sizeof(net->weights[i].outs),1,f);
-     fwrite(&net->weights[i].flags,sizeof(net->weights[i].flags),1,f);
-    }
-   fclose(f);
+   bann_corewrite(net,f,way);
+   fclose(f);   
    return 1;
   }
  else
@@ -459,42 +529,47 @@ int  bann_write(bann*net,const char*file,int way)
 }
 
 // bann read
+int  bann_coreread(bann*net,FILE*f)
+{
+ int  version,i,ret=0,way;
+ char magic[4];
+ if((fread(magic,4,1,f)==1)&&(fread(&version,sizeof(version),1,f)==1)&&(memcmp(magic,"BANN",4)==0)&&(version==1))
+  {
+   real*ptr;
+   memset(net,0,sizeof(bann));
+   
+   fread(&net->opt.optimize,sizeof(net->opt.optimize),1,f);
+   fread(&net->opt.learningrate,sizeof(net->opt.learningrate),1,f);
+   
+   // read net data
+   fread(&net->linearsize,sizeof(net->linearsize),1,f);
+   ptr=net->linear=(real*)malloc( net->linearsize * sizeof(net->linear[0]) );
+   fread(&way,sizeof(way),1,f);
+   fread(net->linear,sizeof(net->linear[0]),net->linearsize,f);     
+
+   // read net weight structure and fill it
+   fread(&net->weightscount,sizeof(net->weightscount),1,f);          
+   net->weights=(weight*)malloc( net->weightscount * sizeof(net->weights[0]) );
+   for(i=0;i<net->weightscount;i++)
+    {
+     int ins,outs,flags;
+     fread(&ins,sizeof(ins),1,f);
+     fread(&outs,sizeof(outs),1,f);
+     fread(&flags,sizeof(flags),1,f);
+     ptr=bann_setweight(net,i,ins,outs,ptr,flags,0);
+    }
+   // build sigmoid table
+   bann_buildsigmoidcache();
+   ret=1;
+  }
+ return ret;
+}
 int  bann_read(bann*net,const char*file)
 {
  FILE*f=fopen(file,"rb");
  if(f)
   {
-   int  version,i,ret=0,way;
-   char magic[4];
-   if((fread(magic,4,1,f)==1)&&(fread(&version,sizeof(version),1,f)==1)&&(memcmp(magic,"BANN",4)==0)&&(version==1))
-    {
-     real*ptr;
-     memset(net,0,sizeof(bann));
-     
-     fread(&net->opt.optimize,sizeof(net->opt.optimize),1,f);
-     fread(&net->opt.learningrate,sizeof(net->opt.learningrate),1,f);
-     
-     // read net data
-     fread(&net->linearsize,sizeof(net->linearsize),1,f);
-     ptr=net->linear=(real*)malloc( net->linearsize * sizeof(net->linear[0]) );
-     fread(&way,sizeof(way),1,f);
-     fread(net->linear,sizeof(net->linear[0]),net->linearsize,f);     
-
-     // read net weight structure and fill it
-     fread(&net->weightscount,sizeof(net->weightscount),1,f);          
-     net->weights=(weight*)malloc( net->weightscount * sizeof(net->weights[0]) );
-     for(i=0;i<net->weightscount;i++)
-      {
-       int ins,outs,flags;
-       fread(&ins,sizeof(ins),1,f);
-       fread(&outs,sizeof(outs),1,f);
-       fread(&flags,sizeof(flags),1,f);
-       ptr=bann_setweight(net,i,ins,outs,ptr,flags,0);
-      }
-     // build sigmoid table
-     bann_buildsigmoidcache();
-     ret=1;
-    }
+   int ret=bann_coreread(net,f);
    fclose(f);
    return ret;
   }

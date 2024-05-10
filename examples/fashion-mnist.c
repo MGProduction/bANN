@@ -14,8 +14,10 @@
 #define TESTING_IMAGES "bin/data/fashion/t10k-images-idx3-ubyte"
 #define TESTING_LABELS "bin/data/fashion/t10k-labels-idx1-ubyte"
 
-#define BANN_HIDDENSIZE     128
+#define BANN_HIDDENSIZE     64
 #define BANN_HIDDENNUMBER    1
+
+#define MAX_EPOCHS           5
 
 int bann_gethighestoutput(bann*net)
 {
@@ -91,7 +93,7 @@ int read_imagesets(const char*f1,const char*f2,int*pmnist_size,int*pmnist_sample
 int main()
 {
  bann          N; 
- int           epoch,max_epoch=8,sample,mnist_size,mnist_sample;
+ int           epoch,sample,mnist_size,mnist_sample;
  int          *idx;
  unsigned char*trainingset;
  unsigned char*trainingoutput;
@@ -104,9 +106,7 @@ int main()
                    &trainingset,&trainingoutput)==3)
   {
 
-   bann_new(&N,mnist_size,BANN_HIDDENSIZE,BANN_HIDDENNUMBER,mnist_outputsize);
-   bann_setlearningrate(&N,1.0f,bann_autooptimize_on);
-
+   bann_new(&N,mnist_size,BANN_HIDDENSIZE,BANN_HIDDENNUMBER,mnist_outputsize);   
 
    idx=(int*)malloc(mnist_sample*sizeof(int));
    for(sample=0;sample<mnist_sample;sample++)
@@ -116,7 +116,7 @@ int main()
    input=(real*)malloc(sizeof(input[0])*mnist_size);
    output=(real*)malloc(sizeof(output[0])*mnist_outputsize);
 
-   for(epoch=0;epoch<max_epoch;epoch++)
+   for(epoch=0;epoch<MAX_EPOCHS;epoch++)
     {
      int good=0,bad=0;
 
@@ -150,9 +150,9 @@ int main()
        bann_train(&N,input,output);
        
        if((sample&0xFF)==0xFF)
-        printf("epoch: %d samples: %d accuracy: %.2f%%       \r",epoch,sample,(real)good*100.0f/(real)(good+bad));
+        printf("epoch: %d samples: %d accuracy: %.2f%% rate: %.2f       \r",epoch,sample,(real)good*100.0f/(real)(good+bad),N.opt.learningrate);
       }
-     printf("epoch: %d samples: %d accuracy: %.2f%%       \n",epoch,sample,(real)good*100.0f/(real)(good+bad));
+     printf("epoch: %d samples: %d accuracy: %.2f%% rate: %.2f       \n",epoch,sample,(real)good*100.0f/(real)(good+bad),N.opt.learningrate);
     }
    free(output);
    free(input);
@@ -210,9 +210,9 @@ int main()
      free(trainingoutput);
     }
    else
-    printf("can't find testing set (check README.md in bin/data/mnist folder)\n");
+    printf("can't find testing set (check README.md in bin/data/fashion folder)\n");
   }
  else
-  printf("can't find training set (check README.md in bin/data/mnist folder)\n");
+  printf("can't find training set (check README.md in bin/data/fashion folder)\n");
  return 1;
 }
