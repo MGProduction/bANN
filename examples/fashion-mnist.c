@@ -8,6 +8,9 @@
 #define BANN_IMPLEMENTATION
 #include "bann.h"
 
+#define BANNQ_IMPLEMENTATION
+#include "bannQ.h"
+
 #define TRAINING_IMAGES "bin/data/fashion/train-images-idx3-ubyte"
 #define TRAINING_LABELS "bin/data/fashion/train-labels-idx1-ubyte"
 

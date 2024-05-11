@@ -486,12 +486,9 @@ int  bann_corewrite(bann*net,FILE*f,int way)
  int version=1,i;
   fwrite("BANN",4,1,f);
   fwrite(&version,sizeof(version),1,f);   
-  
-  fwrite(&net->opt.optimize,sizeof(net->opt.optimize),1,f);
-  fwrite(&net->opt.learningrate,sizeof(net->opt.learningrate),1,f);
-
-  fwrite(&net->linearsize,sizeof(net->linearsize),1,f);
   fwrite(&way,sizeof(way),1,f);
+
+  fwrite(&net->linearsize,sizeof(net->linearsize),1,f);  
   if(way==bann_8bit)
    {
     int  i;
@@ -514,7 +511,11 @@ int  bann_corewrite(bann*net,FILE*f,int way)
     free(blinear);
    }
   else
-   fwrite(net->linear,sizeof(net->linear[0]),net->linearsize,f);
+   {
+    fwrite(net->linear,sizeof(net->linear[0]),net->linearsize,f);
+    fwrite(&net->opt.optimize,sizeof(net->opt.optimize),1,f);
+    fwrite(&net->opt.learningrate,sizeof(net->opt.learningrate),1,f);    
+   }
 
   fwrite(&net->weightscount,sizeof(net->weightscount),1,f);
   for(i=0;i<net->weightscount;i++)
@@ -547,16 +548,30 @@ int  bann_coreread(bann*net,FILE*f)
   {
    real*ptr;
    memset(net,0,sizeof(bann));
-   
-   fread(&net->opt.optimize,sizeof(net->opt.optimize),1,f);
-   fread(&net->opt.learningrate,sizeof(net->opt.learningrate),1,f);
-   
+
+   fread(&way,sizeof(way),1,f);
+     
    // read net data
    fread(&net->linearsize,sizeof(net->linearsize),1,f);
-   ptr=net->linear=(real*)malloc( net->linearsize * sizeof(net->linear[0]) );
-   fread(&way,sizeof(way),1,f);
-   fread(net->linear,sizeof(net->linear[0]),net->linearsize,f);     
-
+   ptr=net->linear=(real*)malloc( net->linearsize * sizeof(net->linear[0]) );   
+   
+   if(way==bann_8bit)
+    {
+     int  i;
+     byte*blinear=(byte*)malloc(net->linearsize);
+     real base,scale;
+     fread(&base,sizeof(base),1,f);fwrite(&scale,sizeof(scale),1,f);
+     fread(blinear,sizeof(blinear[0]),net->linearsize,f);
+     for(i=0;i<net->linearsize;i++)
+      net->linear[i]=base+blinear[i]*scale;
+     free(blinear);
+    }
+   else
+    {
+     fread(net->linear,sizeof(net->linear[0]),net->linearsize,f);     
+     fread(&net->opt.optimize,sizeof(net->opt.optimize),1,f);
+     fread(&net->opt.learningrate,sizeof(net->opt.learningrate),1,f);
+    }
    // read net weight structure and fill it
    fread(&net->weightscount,sizeof(net->weightscount),1,f);          
    net->weights=(weight*)malloc( net->weightscount * sizeof(net->weights[0]) );
