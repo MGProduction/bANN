@@ -1,6 +1,6 @@
 # bANN
 
-bANN is just a header-only simple C library to play with neural networks (using CPU only). 
+**bANN** is just a header-only simple C library to play with neural networks (using CPU only). 
 
 This library is similar to / inspired by gennann and Tinn - surely more readable than mine. 
 
@@ -35,16 +35,35 @@ You can save and read the network using bann_write and bann_read (there's also a
 
 Being a header-only librarey, remember that in your project you need to add 
 
-  #define BANN_IMPLEMENTATION
-  #include "bann.h"
+	#define BANN_IMPLEMENTATION
+	#include "bann.h"
 
 ONCE to compiler also its C code
+
+If you just want to use a bANN quantized file (generated with bANN) you can include just this 
+
+	#define BANN_IMPLEMENTATION
+	#include "bannQ.h"
+	
+	// declare the network
+	bannQ NQ;
+	// you can't create it empty - you can only create it reading a file
+	if(bannQ_read(&NQ,"bin/xor.bannQ"))
+	{
+		...
+		output=bannQ_predict(&NQ,input);   
+		...
+		bannQ_delete(&NQ); 
+	}
+	
+if bANN code is anyway minimal - bANNQ code is way smaller so you don't have any reason to avoid usign a bit of anns capabilities if you need them
+	
 
 # Examples
 
 In examples folder there are few source files to easily check quality and speed of the little library. 
 
 There you can find:
-- XOR: minimal sample to get a XOR behaviour from a 2-2-1 ann. Here it's shown how to change a layer activation function (using tanh instead of sigmoid for the first part of the network) and it's also used to quantized save, and bANNQ (quantized bANN) for an extra run
-- MNIST: it's more or less the "standard" test for anns. Here a 784-64-10 ann reaches 96.25% accuracy with 5 epochs, and that's a matter of few minutes.
-- FASHIN-MNIST: a more complex task, still done with a common dataset. Here a similar 784-64-10 ann needs to reach 96.25% accuracy.
+- **XOR**: minimal sample to get a XOR behaviour from a **2-2-1** ann. Here it's shown how to change a layer activation function (using tanh instead of sigmoid for the first part of the network) and it's also used to quantized save, and bANNQ (quantized bANN) for an extra run
+- **MNIST**: it's more or less the "standard" test for anns. Here a **784-64-10** ann reaches **96.25%** accuracy with **5** epochs, and that's a matter of few minutes.
+- **FASHIN-MNIST**: a more complex task, still done with a common dataset. Here to touch a **90%** accuracy you need a **784-96-10** and **10** epochs.
