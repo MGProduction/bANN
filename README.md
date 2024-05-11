@@ -66,4 +66,4 @@ In examples folder there are few source files to easily check quality and speed 
 There you can find:
 - **XOR**: minimal sample to get a XOR behaviour from a **2-2-1** ann. Here it's shown how to change a layer activation function (using tanh instead of sigmoid for the first part of the network) and it's also used to quantized save, and bANNQ (quantized bANN) for an extra run
 - **MNIST**: it's more or less the "standard" test for anns. Here a **784-64-10** ann reaches **96.25%** accuracy with **5** epochs, and that's a matter of few minutes.
-- **FASHIN-MNIST**: a more complex task, still done with a common dataset. Here to touch a **90%** accuracy you need a **784-96-10** and **10** epochs.
+- **FASHIN-MNIST**: a more complex task, still done with a common dataset. Here to get a little more than **87.10%** accuracy you need a **784-64-10** and around **24** epochs.

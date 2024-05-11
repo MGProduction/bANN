@@ -17,7 +17,7 @@
 #define BANN_HIDDENSIZE    64
 #define BANN_HIDDENNUMBER   1
 
-#define MAX_EPOCHS          5
+#define MAX_EPOCHS          8
 
 int bann_gethighestoutput(bann*net)
 {
