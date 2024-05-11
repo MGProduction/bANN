@@ -1,14 +1,14 @@
 # bANN
 
-**bANN** is just a header-only simple C library to play with neural networks (using CPU only). 
+**bANN** is just a header-only C library for playing with neural networks (using only the CPU). It's meant to be simple, small, relatively fast, and have few extra features compared to similar minimal libraries. I've made it because I need it for some small toy projects, and I've released it under the MIT licence because I've used, studied and loved other open source libraries and wanted to give something back.
 
-This library is similar to / inspired by gennann and Tinn - surely more readable than mine. 
+This library is similar to / inspired by other great C libraries, [genann](https://github.com/codeplea/genann) and [tinn](https://github.com/glouw/tinn), certainly more read, used and tested than mine. 
 
-Like gennann, bANN uses cached sigmoids for speed (if those are used) and a single allocation for all the weights. 
+Like genann, bANN uses cached sigmoids for speed (if used) and a single allocation for all weights. 
 
-But it has also a basic optimizer (that makes a lot of difference in several cases) and the possibility to save and work also with a 8bit quantized network, after the training. 
+But it also has a basic optimiser (which makes a big difference in some cases) and the ability to save and work with an 8bit quantized network after training. 
 
-You can save & read the quantized file version with standard bANN (so you're just saving disk space) but you can also play it with bANNQ (a minimal autonomous derived library) that with dequantize data on-the-fly, using less memory (the price is of course a bit of speed & quality)
+You can save & read the quantized file version with standard bANN (so you're just saving disk space), but you can also play it with bANNQ (a minimal autonomous derived library) that dequantize data on-the-fly, using less memory (the price is of course a bit of speed & quality).
 
 # Usage
 

@@ -14,10 +14,10 @@
 #define TESTING_IMAGES "bin/data/fashion/t10k-images-idx3-ubyte"
 #define TESTING_LABELS "bin/data/fashion/t10k-labels-idx1-ubyte"
 
-#define BANN_HIDDENSIZE    64
+#define BANN_HIDDENSIZE    128
 #define BANN_HIDDENNUMBER    1
 
-#define MAX_EPOCHS          25
+#define MAX_EPOCHS          10
 
 int bann_gethighestoutput(bann*net)
 {
