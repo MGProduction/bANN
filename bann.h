@@ -294,19 +294,26 @@ real*bann_setweight(bann*net,int layernumber,int ins,int outs,real*ptr,int actme
  w->ins=ins; 
  w->outs=outs;
  w->bias=ptr;
- w->bias[0]=bann_rand();
+ if(fillwithrandom)
+  w->bias[0]=bann_rand();
  ptr++;
  w->w=ptr;
  if(fillwithrandom)
   for(i=0;i<ins*outs;i++)
    w->w[i]=bann_rand();
  ptr+=ins*outs;
- w->o=ptr;
- ptr+=outs;
- w->d=ptr;
- ptr+=ins;  
  w->flags=actmethod;
  bann_enableweightactivation(net,layernumber);
+ return ptr;
+}
+
+real*bann_setweighttemp(bann*net,int layernumber,real*ptr)
+{
+ weight*w=&net->weights[layernumber];
+ w->o=ptr;
+ ptr+=w->outs;
+ w->d=ptr;
+ ptr+=w->ins;  
  return ptr;
 }
 
@@ -317,17 +324,22 @@ void bann_new(bann*net,int input,int hidden,int hiddencount,int output)
  real*ptr;
  memset(net,0,sizeof(bann));
  // allocate all the weights
- net->linearsize=((input*hidden+1+hidden+input) + (hidden*output+1+output+hidden) + (hidden*hidden+1+hidden*2)*(hiddencount-1) );
+ net->linearsize=((input*hidden+1+hidden+input) + (hidden*output+1+output+hidden) + (hidden*hidden+1+hidden*2)*(hiddencount-1) ); 
  ptr=net->linear=(real*)malloc( net->linearsize * sizeof(net->linear[0]) );
+ assert(net->linear!=NULL);
  // allocate the layers
  net->weightscount=(1+1+(hiddencount-1));
  net->weights=(weight*)malloc( net->weightscount * sizeof(net->weights[0]) );
+ assert(net->weights!=NULL);
  // set weight size and ptr
- l=0;
  ptr=bann_setweight(net,l++,input,hidden,ptr,bann_activation_sigmoid,1); 
  for(h=0;h<net->weightscount-2;h++)
   ptr=bann_setweight(net,l++,hidden,hidden,ptr,bann_activation_sigmoid,1);
  ptr=bann_setweight(net,l++,hidden,output,ptr,bann_activation_sigmoid,1);
+ // set weight input and delta memory
+ for(l=0;l<net->weightscount;l++)
+  ptr=bann_setweighttemp(net,l,ptr);
+ assert((ptr-net->linear)==net->linearsize);
  // set learning rate in auto adjust mode
  bann_setlearningrate(net,1.0f,bann_autooptimize_auto);
  // build sigmoid table
@@ -338,7 +350,6 @@ void bann_new(bann*net,int input,int hidden,int hiddencount,int output)
 real*bann_predict(bann*net,const real*input)
 {
  int  i,j,l;
- real bestvalue=0.0f;
  // from input layer to output one
  // v values are written on the next lever
  for(l=0;l<net->weightscount;l++)
@@ -483,47 +494,55 @@ void bann_delete(bann*net)
 // bann write
 int  bann_corewrite(bann*net,FILE*f,int way)
 {
- int version=1,i;
-  fwrite("BANN",4,1,f);
-  fwrite(&version,sizeof(version),1,f);   
-  fwrite(&way,sizeof(way),1,f);
+ int version=1,i,usedlinearsize=0;
+  
+ fwrite("BANN",4,1,f);
+ fwrite(&version,sizeof(version),1,f);   
+ 
+ fwrite(&way,sizeof(way),1,f);
+  
+ // linear size is the ALLOC size
+ fwrite(&net->linearsize,sizeof(net->linearsize),1,f);  
+ // but we want usedlinearsize that counts just real weights - not also outputs/delta
+ for(i=0;i<net->weightscount;i++)
+  usedlinearsize+=net->weights[i].ins*net->weights[i].outs+1;
+ fwrite(&usedlinearsize,sizeof(usedlinearsize),1,f);  
 
-  fwrite(&net->linearsize,sizeof(net->linearsize),1,f);  
-  if(way==bann_8bit)
-   {
-    int  i;
-    byte*blinear=(byte*)malloc(net->linearsize);
-    real maxf,minf,scale;
-    maxf=minf=net->linear[0];
-    for(i=1;i<net->linearsize;i++)
-     {
-      if(net->linear[i]>maxf)      maxf=net->linear[i];
-      if(net->linear[i]<minf)      minf=net->linear[i];
-     }
-    scale=(maxf-minf)/255;
-    for(i=0;i<net->linearsize;i++)
-     {
-      byte id=(byte)floor(0.5f+(net->linear[i]-minf)/(maxf-minf)*255);
-      blinear[i]=id;
-     }     
-    fwrite(&minf,sizeof(minf),1,f);fwrite(&scale,sizeof(scale),1,f);
-    fwrite(blinear,sizeof(blinear[0]),net->linearsize,f);
-    free(blinear);
-   }
-  else
-   {
-    fwrite(net->linear,sizeof(net->linear[0]),net->linearsize,f);
-    fwrite(&net->opt.optimize,sizeof(net->opt.optimize),1,f);
-    fwrite(&net->opt.learningrate,sizeof(net->opt.learningrate),1,f);    
-   }
+ if(way==bann_8bit)
+  {
+   int  i;
+   byte*blinear=(byte*)malloc(usedlinearsize);
+   real maxf,minf,scale;
+   maxf=minf=net->linear[0];
+   for(i=1;i<usedlinearsize;i++)
+    {
+     if(net->linear[i]>maxf)      maxf=net->linear[i];
+     if(net->linear[i]<minf)      minf=net->linear[i];
+    }
+   scale=(maxf-minf)/255;
+   for(i=0;i<usedlinearsize;i++)
+    {
+     byte id=(byte)floor(0.5f+(net->linear[i]-minf)/(maxf-minf)*255);
+     blinear[i]=id;
+    }     
+   fwrite(&minf,sizeof(minf),1,f);fwrite(&scale,sizeof(scale),1,f);
+   fwrite(blinear,sizeof(blinear[0]),usedlinearsize,f);
+   free(blinear);
+  }
+ else
+  {
+   fwrite(net->linear,sizeof(net->linear[0]),usedlinearsize,f);
+   fwrite(&net->opt.optimize,sizeof(net->opt.optimize),1,f);
+   fwrite(&net->opt.learningrate,sizeof(net->opt.learningrate),1,f);    
+  }
 
-  fwrite(&net->weightscount,sizeof(net->weightscount),1,f);
-  for(i=0;i<net->weightscount;i++)
-   {
-    fwrite(&net->weights[i].ins,sizeof(net->weights[i].ins),1,f);
-    fwrite(&net->weights[i].outs,sizeof(net->weights[i].outs),1,f);
-    fwrite(&net->weights[i].flags,sizeof(net->weights[i].flags),1,f);
-   }
+ fwrite(&net->weightscount,sizeof(net->weightscount),1,f);
+ for(i=0;i<net->weightscount;i++)
+  {
+   fwrite(&net->weights[i].ins,sizeof(net->weights[i].ins),1,f);
+   fwrite(&net->weights[i].outs,sizeof(net->weights[i].outs),1,f);
+   fwrite(&net->weights[i].flags,sizeof(net->weights[i].flags),1,f);
+  }
  return 1;
 }
 int  bann_write(bann*net,const char*file,int way)
@@ -547,28 +566,30 @@ int  bann_coreread(bann*net,FILE*f)
  if((fread(magic,4,1,f)==1)&&(fread(&version,sizeof(version),1,f)==1)&&(memcmp(magic,"BANN",4)==0)&&(version==1))
   {
    real*ptr;
+   int  usedlinearsize;
    memset(net,0,sizeof(bann));
 
    fread(&way,sizeof(way),1,f);
      
    // read net data
    fread(&net->linearsize,sizeof(net->linearsize),1,f);
+   fread(&usedlinearsize,sizeof(usedlinearsize),1,f);
    ptr=net->linear=(real*)malloc( net->linearsize * sizeof(net->linear[0]) );   
    
    if(way==bann_8bit)
     {
      int  i;
-     byte*blinear=(byte*)malloc(net->linearsize);
+     byte*blinear=(byte*)malloc(usedlinearsize);
      real base,scale;
      fread(&base,sizeof(base),1,f);fwrite(&scale,sizeof(scale),1,f);
-     fread(blinear,sizeof(blinear[0]),net->linearsize,f);
-     for(i=0;i<net->linearsize;i++)
+     fread(blinear,sizeof(blinear[0]),usedlinearsize,f);
+     for(i=0;i<usedlinearsize;i++)
       net->linear[i]=base+blinear[i]*scale;
      free(blinear);
     }
    else
     {
-     fread(net->linear,sizeof(net->linear[0]),net->linearsize,f);     
+     fread(net->linear,sizeof(net->linear[0]),usedlinearsize,f);     
      fread(&net->opt.optimize,sizeof(net->opt.optimize),1,f);
      fread(&net->opt.learningrate,sizeof(net->opt.learningrate),1,f);
     }
@@ -583,6 +604,10 @@ int  bann_coreread(bann*net,FILE*f)
      fread(&flags,sizeof(flags),1,f);
      ptr=bann_setweight(net,i,ins,outs,ptr,flags,0);
     }
+    // set weight input and delta memory
+   for(i=0;i<net->weightscount;i++)
+    ptr=bann_setweighttemp(net,i,ptr);
+
    // build sigmoid table
    bann_buildsigmoidcache();
    ret=1;

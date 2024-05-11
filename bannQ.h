@@ -65,35 +65,148 @@ void bannQ_delete(bannQ*net);
 
 #if defined(BANNQ_IMPLEMENTATION)
 
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+#include <float.h>
+
+#define bannQ_activation_sigmoid   0
+#define bannQ_activation_linear    1
+#define bannQ_activation_relu      2
+#define bannQ_activation_tanh      3
+
+#define bannQ_8bit                 1
+
+// INTERNAL - sigmoid cache code
+#define _Qsigmoid_dom_min     -32
+#define _Qsigmoid_dom_max      32
+#define _Qsigmoid_table_size 2048
+real _Qsigmoid_interval;
+real _Qsigmoid[_Qsigmoid_table_size];
+real bannQ_tanh(real a)
+{
+ return tanhf(a);
+}
+real bannQ_linear(real f)
+{
+ return f;
+}
+real bannQ_relu(real f)
+{
+ if(f>0) return f;
+ else    return 0;
+}
+real bannQ_sigmoid(real f)
+{
+ if (f < _Qsigmoid_dom_min) 
+  return _Qsigmoid[0];
+ else
+ if (f >= _Qsigmoid_dom_max) 
+  return _Qsigmoid[_Qsigmoid_table_size-1];
+ else
+  {
+   int j=(int)((f-_Qsigmoid_dom_min)*_Qsigmoid_interval+0.5f);  
+   if(j>=_Qsigmoid_table_size) 
+    return _Qsigmoid[_Qsigmoid_table_size-1];
+   else
+    return _Qsigmoid[j];
+  }
+}
+void bannQ_buildsigmoidcache()
+{
+ if(_Qsigmoid_interval==0)
+  {
+   int  i;
+   real f;
+   _Qsigmoid_interval=(_Qsigmoid_table_size/(_Qsigmoid_dom_max-_Qsigmoid_dom_min));
+   f=((_Qsigmoid_dom_max-_Qsigmoid_dom_min)/(real)_Qsigmoid_table_size);
+   for (i = 0; i < _Qsigmoid_table_size; ++i) 
+    {
+     real a=_Qsigmoid_dom_min+f*i,b=a;
+     if(a<-45)
+      b=a=0;
+     else
+     if(a>45)
+      b=a=1;
+     else
+      {
+       a=(real)(1.0f/(1+exp(-a)));
+       b=expf(b);
+      }
+     _Qsigmoid[i]=a;   
+    }
+  }
+}
+
+void bannQ_enableweightactivation(bannQ*net,int layernumber)
+{ 
+ switch(net->weights[layernumber].flags&0x7)
+  {
+  case bannQ_activation_sigmoid:
+   net->weights[layernumber].activation=bannQ_sigmoid;
+   break;
+  case bannQ_activation_linear:
+   net->weights[layernumber].activation=bannQ_linear;
+   break;
+  case bannQ_activation_relu:
+   net->weights[layernumber].activation=bannQ_relu;
+   break;
+  case bannQ_activation_tanh:
+   net->weights[layernumber].activation=bannQ_tanh;
+   break;
+  }
+}
+
+// INTERNAL - set weight info - using linear pointer
+byte*bannQ_setweight(bannQ*net,int layernumber,int ins,int outs,byte*ptr,real base,real scale,int actmethod)
+{
+ weightQ*w=&net->weights[layernumber];
+ w->base=base;w->scale=scale;
+ w->ins=ins; 
+ w->outs=outs;
+ w->bias=ptr;
+ ptr++;
+ w->w=ptr;
+ ptr+=ins*outs;
+ w->flags=actmethod;
+ bannQ_enableweightactivation(net,layernumber);
+ return ptr;
+}
+
+real*bannQ_setweighttemp(bannQ*net,int layernumber,real*ptr)
+{
+ weightQ*w=&net->weights[layernumber];
+ w->o=ptr;
+ ptr+=w->outs;
+ ptr+=w->ins;  
+ return ptr;
+}
+
 // bann read
 int  bannQ_coreread(bannQ*net,FILE*f)
 {
- int  version,i,ret=0,way;
+ int  version,ret=0,way;
  char magic[4];
  if((fread(magic,4,1,f)==1)&&(fread(&version,sizeof(version),1,f)==1)&&(memcmp(magic,"BANN",4)==0)&&(version==1))
   {
    real*ptr,base,scale;
-   byte*blinear;
-   int  i;
+   byte*bptr;
+   int  i,usedlinearsize;
 
-   memset(net,0,sizeof(bann));
+   memset(net,0,sizeof(bannQ));
 
    fread(&way,sizeof(way),1,f);
-   if(way!=bann_8bit)
+   if(way!=bannQ_8bit)
     return 0;
 
    fread(&net->linearsize,sizeof(net->linearsize),1,f);
-   blinear=(byte*)malloc(net->linearsize);
-   fread(&base,sizeof(base),1,f);fwrite(&scale,sizeof(scale),1,f);
-   fread(blinear,sizeof(blinear[0]),net->linearsize,f);
-   for(i=0;i<net->linearsize;i++)
-    net->linear[i]=base+blinear[i]*scale;
-   free(blinear);
-   
+   fread(&usedlinearsize,sizeof(usedlinearsize),1,f);
 
-   ptr=net->linear=(real*)malloc( net->linearsize * sizeof(net->linear[0]) );
+   ptr=net->linear=(real*)malloc( (net->linearsize-usedlinearsize) * sizeof(net->linear[0]) );
+   bptr=net->blinear=(byte*)malloc( usedlinearsize * sizeof(net->blinear[0]) );
 
-   fread(net->linear,sizeof(net->linear[0]),net->linearsize,f);     
+   fread(&base,sizeof(base),1,f);fread(&scale,sizeof(scale),1,f);
+   fread(net->blinear,sizeof(net->blinear[0]),usedlinearsize,f);
 
    // read net weight structure and fill it
    fread(&net->weightscount,sizeof(net->weightscount),1,f);          
@@ -104,8 +217,10 @@ int  bannQ_coreread(bannQ*net,FILE*f)
      fread(&ins,sizeof(ins),1,f);
      fread(&outs,sizeof(outs),1,f);
      fread(&flags,sizeof(flags),1,f);
-     ptr=bannQ_setweight(net,i,ins,outs,ptr,flags,0);
+     bptr=bannQ_setweight(net,i,ins,outs,bptr,base,scale,flags);
     }
+   for(i=0;i<net->weightscount;i++)
+    ptr=bannQ_setweighttemp(net,i,ptr);
    // build sigmoid table
    bannQ_buildsigmoidcache();
    ret=1;
@@ -126,23 +241,28 @@ int  bannQ_read(bannQ*net,const char*file)
 }
 
 // bann execution
+#define nnQ_getweight(net,l,r,c) (net->weights[l].base+(net->weights[l].w[c*net->weights[l].ins+r]*net->weights[l].scale))
+#define nnQ_setoutput(net,l,c,v) net->weights[l].o[c]=v
 real*bannQ_predict(bannQ*net,const real*input)
 {
  int  i,j,l;
  // from input layer to output one
  // v values are written on the next lever
  for(l=0;l<net->weightscount;l++)
-  for(i=0;i<net->weights[l].outs;i++)
-   {
-    real sum=0.0f;
-    for(j=0;j<net->weights[l].ins;j++)
-     if(l==0)      
-      // use input instead of previous hidden state
-      sum+=input[j]*nn_getweight(net,l,j,i);       
-     else
-      sum+=net->weights[l-1].o[j]*nn_getweight(net,l,j,i);
-    nn_setoutput(net,l,i,net->weights[l].activation(sum+net->weights[l].bias[l]));
-   }
+  {
+   real bias=net->weights[l].base+(net->weights[l].bias[l]*net->weights[l].scale);
+   for(i=0;i<net->weights[l].outs;i++)
+    {
+     real sum=0.0f;
+     for(j=0;j<net->weights[l].ins;j++)
+      if(l==0)      
+       // use input instead of previous hidden state
+       sum+=input[j]*nnQ_getweight(net,l,j,i);       
+      else
+       sum+=net->weights[l-1].o[j]*nnQ_getweight(net,l,j,i);
+     nnQ_setoutput(net,l,i,net->weights[l].activation(sum+bias));
+    }
+  }
   return net->weights[l-1].o;
 }
 
