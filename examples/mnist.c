@@ -17,7 +17,7 @@
 #define BANN_HIDDENSIZE    64
 #define BANN_HIDDENNUMBER   1
 
-#define MAX_EPOCHS          4
+#define MAX_EPOCHS          5
 
 int bann_gethighestoutput(bann*net)
 {
@@ -160,7 +160,8 @@ int main()
    free(input);
    
    // save
-   bann_write(&N,"bin/fashion-mnist.bann",0);
+   bann_write(&N,"bin/mnist.bann",0);
+   bann_write(&N,"bin/mnist.bannQ",bann_8bit);
    bann_delete(&N); 
 
    // destroy training set
@@ -168,7 +169,7 @@ int main()
    free(trainingoutput);
 
    // reload
-   if(bann_read(&N,"bin/fashion-mnist.bann"))
+   if(bann_read(&N,"bin/mnist.bann"))
     {
      int good=0,bad=0;
 

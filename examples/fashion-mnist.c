@@ -159,6 +159,7 @@ int main()
    
    // save
    bann_write(&N,"bin/fashion-mnist.bann",0);
+   bann_write(&N,"bin/fashion-mnist.bannQ",bann_8bit);
    bann_delete(&N); 
 
    // destroy training set
