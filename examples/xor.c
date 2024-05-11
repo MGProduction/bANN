@@ -13,11 +13,12 @@ const real output[4] = {0, 1, 1, 0};
 int main()
 {
  bann N; 
- int      xor_maxepoch=8*1024;
+ int      xor_maxepoch=256;
  int      e=0,v,cnt=0;
  real     err=0;
 
  bann_new(&N,2,2,1,1);
+ bann_setweightactivation(&N,0,bann_activation_tanh);
 
  for(e=0;e<xor_maxepoch;e++)
   for(v=0;v<4;v++)
