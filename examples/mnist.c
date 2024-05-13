@@ -19,6 +19,16 @@
 
 #define MAX_EPOCHS          8
 
+void history_add(bann*N,const char*file,int e,real quality)
+{
+ FILE*f=fopen(file,"ab");
+ if(f)
+ {
+  fprintf(f,"%d x %d x %d (epochs: %d): %.2f%%\r\n",N->weights[0].ins,N->weights[0].outs,N->weights[N->weightscount-1].outs,e,(float)quality);
+  fclose(f);
+ } 
+}
+
 int bann_gethighestoutput(bann*net)
 {
  int  i,best=-1,hm=net->weights[net->weightscount-1].outs;
@@ -208,6 +218,9 @@ int main()
      free(input);
 
      printf("samples: %d accuracy: %.2f%%       \n",sample,(real)good*100.0f/(real)(good+bad));
+
+     history_add(&N,"bin/mnist.log",MAX_EPOCHS,(real)good*100.0f/(real)(good+bad));
+
      bann_delete(&N); 
      free(trainingset);
      free(trainingoutput);

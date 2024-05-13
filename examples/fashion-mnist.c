@@ -17,7 +17,17 @@
 #define BANN_HIDDENSIZE     64
 #define BANN_HIDDENNUMBER    1
 
-#define MAX_EPOCHS          24
+#define MAX_EPOCHS          16
+
+void history_add(bann*N,const char*file,int e,real quality)
+{
+ FILE*f=fopen(file,"ab");
+ if(f)
+ {
+  fprintf(f,"%d x %d x %d (epochs: %d): %.2f%%\r\n",N->weights[0].ins,N->weights[0].outs,N->weights[N->weightscount-1].outs,e,(float)quality);
+  fclose(f);
+ } 
+}
 
 int bann_gethighestoutput(bann*net)
 {
@@ -106,7 +116,7 @@ int main()
                    &trainingset,&trainingoutput)==3)
   {
 
-   bann_new(&N,mnist_size,BANN_HIDDENSIZE,BANN_HIDDENNUMBER,mnist_outputsize);   
+   bann_new(&N,mnist_size,BANN_HIDDENSIZE,BANN_HIDDENNUMBER,mnist_outputsize);      
 
    idx=(int*)malloc(mnist_sample*sizeof(int));
    for(sample=0;sample<mnist_sample;sample++)
@@ -206,6 +216,9 @@ int main()
      free(input);
 
      printf("samples: %d accuracy: %.2f%%       \n",sample,(real)good*100.0f/(real)(good+bad));
+
+     history_add(&N,"bin/fashion-mnist.log",MAX_EPOCHS,(real)good*100.0f/(real)(good+bad));
+
      bann_delete(&N); 
      free(trainingset);
      free(trainingoutput);

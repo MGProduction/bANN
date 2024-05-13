@@ -17,7 +17,7 @@ int main()
 {
  bann     N; 
  bannQ    NQ; 
- int      xor_maxepoch=512;
+ int      xor_maxepoch=128;
  int      e=0,v,cnt=0;
  real     err=0;
 

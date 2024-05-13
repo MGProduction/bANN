@@ -59,3 +59,5 @@ build/
 
 *idx3-ubyte
 *idx1-ubyte
+
+skip_*
