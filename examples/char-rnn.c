@@ -6,6 +6,7 @@
 #include <assert.h>
 
 #define BANN_IMPLEMENTATION
+#define BANN_RNN
 #include "bann.h"
 
 #define MAX_CHARS        256
@@ -71,6 +72,8 @@ int createnetfromtextfile(bann*N,const char*file,char**text,size_t*psize,int*pvo
     }  
 
   bann_new(N,needed,NET_HIDDEN_COUNT,1,needed);
+  bann_setweightactivation(N,0,bann_activation_tanh);
+  bann_setweightactivation(N,1,bann_activation_softmax);
   return 1;
  }
  else
@@ -138,7 +141,7 @@ int main()
  if(createnetfromtextfile(&N,"bin/data/text/test.txt",&file,&size,&vocab_size))
   {
    int     e,I[2],O[2],good=0,bad=0,sel;   
-   size_t  seqlen=20;
+   size_t  seqlen=20,s;
    bannidx trainI,trainO;
    trainI.m=trainO.m=2;trainI.b=&I[0];trainO.b=&O[0];
    printf("training...\n");

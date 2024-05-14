@@ -250,7 +250,7 @@ real*bannQ_predict(bannQ*net,const real*input)
  // v values are written on the next lever
  for(l=0;l<net->weightscount;l++)
   {
-   real bias=net->weights[l].base+(net->weights[l].bias[l]*net->weights[l].scale);
+   real bias=net->weights[l].base+(net->weights[l].bias[0]*net->weights[l].scale);
    for(i=0;i<net->weights[l].outs;i++)
     {
      real sum=0.0f;

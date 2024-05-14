@@ -1,0 +1,8 @@
+[mnist]: 784 x 8 x 10 (epochs: 32): 90.67%
+[mnist]: 784 x 16 x 10 (epochs: 16): 93.67%
+[fashion]: 784 x 16 x 10 (epochs: 16): 84.93%
+[fashion]: 784 x 32 x 10 (epochs: 16): 86.48%
+[fashion]: 784 x 64 x 10 (epochs: 16): 86.65%
+[mnist]: 784 x 64 x 10 (epochs: 8): 96.85%
+[fashion]: 784 x 96 x 10 (epochs: 7): 86.55%
+[fashion]: 784 x 96 x 10 (epochs: 10): 87.26%
