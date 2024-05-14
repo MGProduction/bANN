@@ -10,9 +10,11 @@ But it also has a basic optimiser (which makes a big difference in most cases) a
 
 You can save & read the quantized file version with standard bANN (so you're just saving disk space), but you can also play it with bANNQ (a minimal autonomous derived library) that dequantize data on-the-fly, using less memory (the price is of course a bit of speed & quality).
 
+Another difference is the fact that **bANN** let you use as input/output an array of active cells - instead of a whole array of values. IMHO, more clear, usable and fast - of course just using CPU only code.
+
 # Usage
 
-I kept everything very simple:
+I tried to keep everything very simple:
 
     // declare the network
     bann N;
