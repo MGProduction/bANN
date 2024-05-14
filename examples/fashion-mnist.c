@@ -22,10 +22,10 @@
 #define TESTING_IMAGES "bin/data/fashion/t10k-images-idx3-ubyte"
 #define TESTING_LABELS "bin/data/fashion/t10k-labels-idx1-ubyte"
 
-#define BANN_HIDDENSIZE        96
+#define BANN_HIDDENSIZE       128
 #define BANN_HIDDENNUMBER       1
 
-#define MAX_EPOCHS             10
+#define MAX_EPOCHS              5 
 
 #else
 
@@ -146,7 +146,6 @@ int main()
    bann_io  in,out;
 
    bann_new(&N,mnist_size,BANN_HIDDENSIZE,BANN_HIDDENNUMBER,mnist_outputsize);      
-   //bann_setlearningrate(&N,0.9f,bann_autooptimize_progressive);
 
    index=(int*)malloc(mnist_sample*sizeof(int));
    for(sample=0;sample<mnist_sample;sample++)

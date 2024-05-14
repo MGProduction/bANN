@@ -30,6 +30,32 @@ extern "C" {
 typedef float         real;
 typedef unsigned char byte;
 
+#if !defined(bann_io)
+enum {
+ standard=0,
+ idx=1,
+ fidx=2,
+}bann_iokind;
+
+typedef struct{
+ int*hotpos;
+ int hotcnt;
+}bann_idx;
+typedef struct{
+ int *hotpos; 
+ real*hotval;
+ int  hotcnt;
+}bann_fidx;
+typedef struct{
+ union{
+  real     *linear;
+  bann_idx *idx;
+  bann_fidx*fidx;
+ };
+ enum bann_iokind kind;
+}bann_io;
+#endif
+
 // ---------------------------------------------------------------------
 
 typedef real (*bact)(real f);
@@ -243,7 +269,7 @@ int  bannQ_read(bannQ*net,const char*file)
 // bann execution
 #define nnQ_getweight(net,l,r,c) (net->weights[l].base+(net->weights[l].w[c*net->weights[l].ins+r]*net->weights[l].scale))
 #define nnQ_setoutput(net,l,c,v) net->weights[l].o[c]=v
-real*bannQ_predict(bannQ*net,const real*input)
+real*bannQ_predict(bannQ*net,bann_io*in)
 {
  int  i,j,l;
  // from input layer to output one
@@ -254,12 +280,30 @@ real*bannQ_predict(bannQ*net,const real*input)
    for(i=0;i<net->weights[l].outs;i++)
     {
      real sum=0.0f;
-     for(j=0;j<net->weights[l].ins;j++)
-      if(l==0)      
+     if(l==0)      
+      {
        // use input instead of previous hidden state
-       sum+=input[j]*nnQ_getweight(net,l,j,i);       
-      else
-       sum+=net->weights[l-1].o[j]*nnQ_getweight(net,l,j,i);
+       switch(in->kind)
+        {
+         case standard:
+          for(j=0;j<net->weights[l].ins;j++)             
+           sum+=input[j]*nnQ_getweight(net,l,j,i);       
+         break;
+         case idx:
+          for(j=0;j<input->idx->hotcnt;j++)        
+           sum+=nnQ_getweight(net,l,input->idx->hotpos[j],i);       
+          break;
+         case fidx:
+          for(j=0;j<input->fidx->hotcnt;j++)        
+           sum+=input->fidx->hotval[j]*nnQ_getweight(net,l,input->fidx->hotpos[j],i);       
+          break;
+        }
+      }
+     else
+      {
+       for(j=0;j<net->weights[l].ins;j++)
+        sum+=net->weights[l-1].o[j]*nnQ_getweight(net,l,j,i);
+      }
      nnQ_setoutput(net,l,i,net->weights[l].activation(sum+bias));
     }
   }

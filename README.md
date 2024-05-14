@@ -17,7 +17,7 @@ I kept everything very simple:
     // declare the network
     bann N;
 	// declare input / output variables
-	bannio in,out;
+	bann_io in,out;
 	// create it
     bann_new(&N,INPUT_SIZE,HIDDEN_SIZE,HIDDEN_NUMBER,OUTPUT_SIZE);
 	// create in/out vars
@@ -78,9 +78,7 @@ There you can find:
 
 ### XOR (xor.c)
 
-Minimal sample to get a XOR behaviour from a **2-2-1** ann. 
-
-Here it's shown how to change layer activation functions (using **tanh** instead of sigmoid for the first part of the network) and it's also used to quantized save, and bANNQ (quantized bANN) for an extra run.
+Minimal sample to get a XOR behaviour from a **2-2-1** ann. It also used to quantized save, and bANNQ (quantized bANN) for an extra run.
 
 ### MNIST (fashion-mnist.c) 
 

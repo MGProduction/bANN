@@ -6,3 +6,5 @@
 [mnist]: 784 x 64 x 10 (epochs: 8): 96.85%
 [fashion]: 784 x 96 x 10 (epochs: 7): 86.55%
 [fashion]: 784 x 96 x 10 (epochs: 10): 87.26%
+[fashion]: 784 x 96 x 10 (epochs: 10): 85.82%
+[fashion]: 784 x 128 x 10 (epochs: 5): 86.35%
