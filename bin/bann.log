@@ -8,3 +8,6 @@
 [fashion]: 784 x 96 x 10 (epochs: 10): 87.26%
 [fashion]: 784 x 96 x 10 (epochs: 10): 85.82%
 [fashion]: 784 x 128 x 10 (epochs: 5): 86.35%
+[fashion]: 784 x 96 x 10 (epochs: 10): 86.91%
+[fashion]: 784 x 96 x 10 (epochs: 10): 87.03%
+[fashion]: 784 x 96 x 10 (epochs: 10): 87.10%
