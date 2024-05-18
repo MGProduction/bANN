@@ -9,14 +9,15 @@
 // NER tagger configuration
 // ----------------------------------
 
-#define WINDOW_SIZE       4
-#define HIDDEN_LAYER     64 
-#define MAX_EPOCHS       16
+#define WINDOW_SIZE       8
+#define HIDDEN_LAYER    64
+#define MAX_EPOCHS      128
 #define MSE_STOP     0.001f
 
 #define HEADTAIL_LIMIT    6
 
-#define POSTAGGER
+//#define POSTAGGER
+#define CHARSONLY
 
 // ----------------------------------
 
@@ -190,7 +191,9 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t nerdict)
    sum+=dict->entry[e].value;
   }
  avg=(sum-top)/(dict->len-1);
-
+ avg=max(2,avg/2);
+ 
+ ner->usedchars[2]=1;
  for(e=0;e<dict->len;e++)
   {
    const char*wrd=dict->entry[e].key;
@@ -199,7 +202,12 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t nerdict)
     ner->maxlen=len;
    len=0;
    while(wrd[len])
-    ner->usedchars[(byte)wrd[len++]]=1;
+    {
+     byte ch=(byte)wrd[len++];
+     if((ch>='A')&&(ch<='Z'))
+      ch=(ch-'A')+'a';
+     ner->usedchars[ch]=1;
+    }
    if(dict->entry[e].value>avg)
     dict_add(ner->cdict,dict->entry[e].key,dict->entry[e].value);
    else
@@ -221,13 +229,18 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t nerdict)
 
  ner->window_size=WINDOW_SIZE;
  ner->tagcnt=nerdict->len;
+#if defined(CHARSONLY)
+ ner->charseq=(ner->ichars*(HEADTAIL_LIMIT*2)+1+1);
+ ner->corpusseq=ner->charseq*(ner->window_size*2+1);
+ bann_new(&ner->N,ner->corpusseq,HIDDEN_LAYER,1,nerdict->len);
+#else
  if(HEADTAIL_LIMIT)
   ner->charseq=(ner->ichars*(HEADTAIL_LIMIT*2));
  else
   ner->charseq=(ner->ichars*ner->maxlen);
  ner->corpusseq=(ner->cdict->len+ner->tagcnt)*(ner->window_size*2+1);
-
  bann_new(&ner->N,(ner->corpusseq+ner->charseq),HIDDEN_LAYER,1,nerdict->len);
+#endif
 
  printf("creating bANN with %d x %d x %d cells\n",(ner->corpusseq+ner->charseq),HIDDEN_LAYER,nerdict->len); 
 }
@@ -406,6 +419,60 @@ void corpus_setinputlayer(NERtagger*ner,corpus*wrd,int w,bann_io*in)
 {
  int        ww,p,odd=0;
  in->idx->hotcnt=0;
+#if defined(CHARSONLY)
+ for(p=0,ww=-ner->window_size;ww<=ner->window_size;ww++)
+  {
+   int base=p*ner->charseq;
+   if((w+ww>=0)&&(w+ww<wrd->c)&&(wrd->b[w+ww].fitR!=-1))
+    {
+     const char*fit=wrd->dict->entry[wrd->b[w].fit].key;
+     int        c,cc,id,up=0;
+     
+     for(c=0;fit[c];c++)
+      {
+       byte ch=(byte)fit[c];
+       if((ch>='A')&&(ch<='Z'))
+        up++;
+      }     
+     if(up==1)
+      in->idx->hotpos[in->idx->hotcnt++]=base;
+     if(up>1)
+      in->idx->hotpos[in->idx->hotcnt++]=base+1;
+     base+=2;
+
+     for(c=0;fit[c];c++)
+      if(c<HEADTAIL_LIMIT)
+       {
+        byte ch=(byte)fit[c];
+        if((ch>='A')&&(ch<='Z'))
+         ch=(ch-'A')+'a';
+        id=ner->usedchars[ch];
+        if(id!=255)
+         in->idx->hotpos[in->idx->hotcnt++]=base+c*ner->ichars+id;
+        else
+         odd++;
+       }
+      else
+       break;
+     c=(int)strlen(fit);cc=0;
+     while(c--)
+      {
+       byte ch=(byte)fit[c];
+       if((ch>='A')&&(ch<='Z'))
+        ch=(ch-'A')+'a';
+       id=ner->usedchars[ch];
+       if(id!=255)
+        in->idx->hotpos[in->idx->hotcnt++]=base+(HEADTAIL_LIMIT+cc*ner->ichars)+id;
+       else
+        odd++;
+       cc++;
+       if(cc==HEADTAIL_LIMIT)
+        break;
+      }
+    }
+   p++;
+  }
+#else
  // add word chars
  if(ner->ichars)
   {
@@ -475,6 +542,7 @@ void corpus_setinputlayer(NERtagger*ner,corpus*wrd,int w,bann_io*in)
       }
      p++;
     }
+#endif
 }
 
 void ner_qual(int*good,int*add,int*miss,int hm,real*acc,real*prec,real*recall,real*F1)
@@ -620,7 +688,7 @@ int main(int argc,const char*argv[])
    memset(missN,0,hmNER*sizeof(missN[0]));
    memset(addN,0,hmNER*sizeof(addN[0]));
 
-   //shuffle(index,train.c);
+   shuffle(index,train.c);
    for(ww=0;ww<train.c;ww++)
     {
      w=index[ww];

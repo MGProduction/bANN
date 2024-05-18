@@ -9,7 +9,7 @@
 #include "bann.h"
 
 // 
-#define FASHION_TEST
+//#define FASHION_TEST
 // 
 
 #if defined(FASHION_TEST)
@@ -25,7 +25,7 @@
 #define BANN_HIDDENSIZE        96
 #define BANN_HIDDENNUMBER       1
 
-#define MAX_EPOCHS             10 
+#define MAX_EPOCHS              5 
 
 #else
 
@@ -146,6 +146,7 @@ int main()
    bann_io  in,out;
 
    bann_new(&N,mnist_size,BANN_HIDDENSIZE,BANN_HIDDENNUMBER,mnist_outputsize);      
+   bann_setlearningrate(&N,0.2f,bann_optimizer_off,64);
 
    index=(int*)malloc(mnist_sample*sizeof(int));
    for(sample=0;sample<mnist_sample;sample++)
