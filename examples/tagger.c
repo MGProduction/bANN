@@ -330,6 +330,7 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t posdict,dict_t nerdict)
 {
  int  e,sum=0,avg=0,top=0;
  char chars[MAX_CHARS];
+ dict_t tdict=dict_new();
 
  memset(ner,0,sizeof(NERtagger));
  ner->cdict=dict_new();
@@ -367,16 +368,36 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t posdict,dict_t nerdict)
    else
     {
      char tmp[256];
+     if(cpos_morph(dict->entry[e].key,tmp,3))
+      dict_add(tdict,tmp,dict->entry[e].cnt);
      if(cpos_morph(dict->entry[e].key,tmp,2))
-      dict_add(ner->cdict,tmp,dict->entry[e].cnt);
+      dict_add(tdict,tmp,dict->entry[e].cnt);
      if(cpos_morph(dict->entry[e].key,tmp,1))
-      dict_add(ner->cdict,tmp,dict->entry[e].cnt);
+      dict_add(tdict,tmp,dict->entry[e].cnt);
      if(cpos_morph(dict->entry[e].key,tmp,0))
-      dict_add(ner->cdict,tmp,dict->entry[e].cnt);
+      dict_add(tdict,tmp,dict->entry[e].cnt);
      if(cpos_morph(dict->entry[e].key,tmp,-1))
-      dict_add(ner->cdict,tmp,dict->entry[e].cnt);
+      dict_add(tdict,tmp,dict->entry[e].cnt);
     }
   }
+
+ sum=top=0;
+ for(e=0;e<tdict->c;e++)
+  {
+   if(tdict->entry[e].cnt>top)
+    top=tdict->entry[e].cnt;
+   sum+=tdict->entry[e].cnt;
+  }
+ avg=(sum-top)/(tdict->c-1);
+ avg=max(2,avg/2);
+
+ for(e=0;e<tdict->c;e++) 
+  if(tdict->entry[e].cnt>avg)
+    dict_add(ner->cdict,tdict->entry[e].key,tdict->entry[e].cnt);
+
+ dict_free(tdict);
+
+
  for(e=0;e<MAX_CHARS;e++)
   if(ner->usedchars[e])
    {
@@ -565,6 +586,9 @@ void corpus_remap(corpus*crp,dict_t cdict,corpus*remap)
     else
      {
       char tmp[256];
+      if(cpos_morph(fit,tmp,3)&&((id=dict_find(cdict,tmp))!=-1))
+       crp->wrd.b[e].fitR=id;
+      else
       if(cpos_morph(fit,tmp,2)&&((id=dict_find(cdict,tmp))!=-1))
        crp->wrd.b[e].fitR=id;
       else
