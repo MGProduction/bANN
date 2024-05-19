@@ -30,7 +30,7 @@ extern "C" {
 typedef float         real;
 typedef unsigned char byte;
 
-#if !defined(bann_io)
+#if !defined(BANN_IO_DEFINED)
 enum {
  standard=0,
  idx=1,
@@ -54,6 +54,7 @@ typedef struct{
  };
  enum bann_iokind kind;
 }bann_io;
+#define BANN_IO_DEFINED
 #endif
 
 // ---------------------------------------------------------------------
@@ -84,7 +85,7 @@ typedef struct{
 }bannQ;
 
 int  bannQ_read(bannQ*net,const char*file);
-real*bannQ_predict(bannQ*net,const real*input);
+real*bannQ_predict(bannQ*net,bann_io*input);
 void bannQ_delete(bannQ*net);
 
 // ---------------------------------------------------------------------
@@ -190,10 +191,13 @@ byte*bannQ_setweight(bannQ*net,int layernumber,int ins,int outs,byte*ptr,real ba
  w->base=base;w->scale=scale;
  w->ins=ins; 
  w->outs=outs;
+ 
  w->bias=ptr;
- ptr++;
+ ptr+=outs;
+
  w->w=ptr;
  ptr+=ins*outs;
+
  w->flags=actmethod;
  bannQ_enableweightactivation(net,layernumber);
  return ptr;
@@ -269,7 +273,7 @@ int  bannQ_read(bannQ*net,const char*file)
 // bann execution
 #define nnQ_getweight(net,l,r,c) (net->weights[l].base+(net->weights[l].w[c*net->weights[l].ins+r]*net->weights[l].scale))
 #define nnQ_setoutput(net,l,c,v) net->weights[l].o[c]=v
-real*bannQ_predict(bannQ*net,bann_io*in)
+real*bannQ_predict(bannQ*net,bann_io*input)
 {
  int  i,j,l;
  // from input layer to output one
@@ -283,11 +287,11 @@ real*bannQ_predict(bannQ*net,bann_io*in)
      if(l==0)      
       {
        // use input instead of previous hidden state
-       switch(in->kind)
+       switch(input->kind)
         {
          case standard:
           for(j=0;j<net->weights[l].ins;j++)             
-           sum+=input[j]*nnQ_getweight(net,l,j,i);       
+           sum+=input->linear[j]*nnQ_getweight(net,l,j,i);       
          break;
          case idx:
           for(j=0;j<input->idx->hotcnt;j++)        

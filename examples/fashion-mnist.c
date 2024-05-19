@@ -25,7 +25,7 @@
 #define BANN_HIDDENSIZE        96
 #define BANN_HIDDENNUMBER       1
 
-#define MAX_EPOCHS              5 
+#define MAX_EPOCHS              8 
 
 #else
 
@@ -146,7 +146,9 @@ int main()
    bann_io  in,out;
 
    bann_new(&N,mnist_size,BANN_HIDDENSIZE,BANN_HIDDENNUMBER,mnist_outputsize);      
-   bann_setlearningrate(&N,0.2f,bann_optimizer_off,64);
+   //#if defined(FASHION_TEST)
+   //bann_setlearningrate(&N,0.25f,bann_optimizer_adaptive,mnist_sample/4);
+   //#endif
 
    index=(int*)malloc(mnist_sample*sizeof(int));
    for(sample=0;sample<mnist_sample;sample++)
@@ -168,6 +170,8 @@ int main()
     {
      int  good=0,bad=0;
      real glerr=0;
+
+     //N.opt.speed=mnist_sample/(4+epoch);
 
      shuffle(index,mnist_sample);
 

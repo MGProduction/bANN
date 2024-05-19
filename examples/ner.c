@@ -9,15 +9,16 @@
 // NER tagger configuration
 // ----------------------------------
 
-#define WINDOW_SIZE       8
-#define HIDDEN_LAYER    64
-#define MAX_EPOCHS      128
+#define WINDOW_SIZE         8
+#define HIDDEN_LAYER       256
+#define HIDDEN_LAYER_COUNT  1
+#define MAX_EPOCHS        128
 #define MSE_STOP     0.001f
 
-#define HEADTAIL_LIMIT    6
+#define HEADTAIL_LIMIT      6
 
 //#define POSTAGGER
-#define CHARSONLY
+//#define CHARSONLY
 
 // ----------------------------------
 
@@ -89,71 +90,69 @@ int bann_gethighestoutput(bann*net)
 // ----------------------------------
 // basic dictionary implementation
 // ----------------------------------
-typedef struct dict_entry_s {
-    char *key;
-    int value;
+typedef struct dict_entry_s
+{
+ char *key;
+ int   cnt;
 } dict_entry_s;
 
-typedef struct dict_s {
-    int len;
-    int cap;
-    dict_entry_s *entry;
+typedef struct dict_s
+{
+ int c,m;
+ dict_entry_s *entry;
 } dict_s, *dict_t;
 
-int dict_find_index(dict_t dict, const char *key)
+int dict_find(dict_t dict, const char *key)
 {
  int i;
-    for (i = 0; i < dict->len; i++) {
-     if (!strcmp(dict->entry[i].key, key)) {
-            return i;
-        }
-    }
-    return -1;
+ for (i = 0; i < dict->c; i++)
+  if (!strcmp(dict->entry[i].key, key))
+   return i;
+ return -1;
 }
 
-int dict_find(dict_t dict, const char *key, int def) {
-    int idx = dict_find_index(dict, key);
-    return idx == -1 ? def : dict->entry[idx].value;
+int dict_add(dict_t dict, const char *key, int cnt)
+{
+ int idx = dict_find(dict, key);
+ if (idx != -1) 
+ {
+     dict->entry[idx].cnt += cnt;
+     return idx;
+ }
+ if (dict->c == dict->m)
+ {
+     dict->m *= 2;
+     dict->entry = realloc(dict->entry, dict->m * sizeof(dict_entry_s));
+ }
+ dict->entry[dict->c].key = _strdup(key);
+ dict->entry[dict->c].cnt = cnt;
+ dict->c++;
+ return dict->c-1;
 }
 
-int dict_add(dict_t dict, const char *key, int value) {
-   int idx = dict_find_index(dict, key);
-   if (idx != -1) {
-       dict->entry[idx].value += value;
-       return idx;
-   }
-   if (dict->len == dict->cap) {
-       dict->cap *= 2;
-       dict->entry = realloc(dict->entry, dict->cap * sizeof(dict_entry_s));
-   }
-   dict->entry[dict->len].key = _strdup(key);
-   dict->entry[dict->len].value = value;
-   dict->len++;
-   return dict->len-1;
-}
-
-dict_t dict_new(void) {
-    dict_s proto = {0, 10, malloc(10 * sizeof(dict_entry_s))};
-    dict_t d = malloc(sizeof(dict_s));
-    *d = proto;
-    return d;
+dict_t dict_new(void)
+{
+ dict_t d = malloc(sizeof(dict_s));
+ d->c=0;
+ d->m=10;
+ d->entry=(dict_entry_s*)malloc(d->m*sizeof(dict_entry_s));
+ return d;
 }
 
 void dict_free(dict_t dict)
 {
  int i;
-    for (i = 0; i < dict->len; i++) {
-        free(dict->entry[i].key);
-    }
-    free(dict->entry);
-    free(dict);
+ for (i = 0; i < dict->c; i++)
+  free(dict->entry[i].key);
+ free(dict->entry);
+ free(dict);
 }
 
 void dict_emit(const char*head,dict_t d)
 {
  int i;
  printf("%s: ",head);
- for(i=0;i<d->len;i++)
+ for(i=0;i<d->c;i++)
   {
    if(i) printf(", ");
    printf(d->entry[i].key);
@@ -184,17 +183,17 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t nerdict)
  ner->cdict=dict_new();
  memset(ner->usedchars,0,sizeof(ner->usedchars));
  
- for(e=0;e<dict->len;e++)
+ for(e=0;e<dict->c;e++)
   {
-   if(dict->entry[e].value>top)
-    top=dict->entry[e].value;
-   sum+=dict->entry[e].value;
+   if(dict->entry[e].cnt>top)
+    top=dict->entry[e].cnt;
+   sum+=dict->entry[e].cnt;
   }
- avg=(sum-top)/(dict->len-1);
+ avg=(sum-top)/(dict->c-1);
  avg=max(2,avg/2);
  
  ner->usedchars[2]=1;
- for(e=0;e<dict->len;e++)
+ for(e=0;e<dict->c;e++)
   {
    const char*wrd=dict->entry[e].key;
    int len=(int)strlen(wrd);
@@ -208,12 +207,12 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t nerdict)
       ch=(ch-'A')+'a';
      ner->usedchars[ch]=1;
     }
-   if(dict->entry[e].value>avg)
-    dict_add(ner->cdict,dict->entry[e].key,dict->entry[e].value);
+   if(dict->entry[e].cnt>avg)
+    dict_add(ner->cdict,dict->entry[e].key,dict->entry[e].cnt);
    else
     {
-     dict_add(ner->cdict,morph(dict->entry[e].key,1),dict->entry[e].value);
-     dict_add(ner->cdict,morph(dict->entry[e].key,0),dict->entry[e].value);
+     dict_add(ner->cdict,morph(dict->entry[e].key,1),dict->entry[e].cnt);
+     dict_add(ner->cdict,morph(dict->entry[e].key,0),dict->entry[e].cnt);
     }
   }
  for(e=0;e<MAX_CHARS;e++)
@@ -228,21 +227,21 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t nerdict)
  qsort(chars,ner->ichars,sizeof(chars[0]),chars_compare);
 
  ner->window_size=WINDOW_SIZE;
- ner->tagcnt=nerdict->len;
+ ner->tagcnt=nerdict->c;
 #if defined(CHARSONLY)
  ner->charseq=(ner->ichars*(HEADTAIL_LIMIT*2)+1+1);
  ner->corpusseq=ner->charseq*(ner->window_size*2+1);
- bann_new(&ner->N,ner->corpusseq,HIDDEN_LAYER,1,nerdict->len);
+ bann_new(&ner->N,ner->corpusseq,HIDDEN_LAYER,HIDDEN_LAYER_COUNT,nerdict->c);
 #else
  if(HEADTAIL_LIMIT)
   ner->charseq=(ner->ichars*(HEADTAIL_LIMIT*2));
  else
   ner->charseq=(ner->ichars*ner->maxlen);
- ner->corpusseq=(ner->cdict->len+ner->tagcnt)*(ner->window_size*2+1);
- bann_new(&ner->N,(ner->corpusseq+ner->charseq),HIDDEN_LAYER,1,nerdict->len);
+ ner->corpusseq=(ner->cdict->c+ner->tagcnt)*(ner->window_size*2+1);
+ bann_new(&ner->N,(ner->corpusseq+ner->charseq),HIDDEN_LAYER,1,nerdict->c);
 #endif
 
- printf("creating bANN with %d x %d x %d cells\n",(ner->corpusseq+ner->charseq),HIDDEN_LAYER,nerdict->len); 
+ printf("creating bANN with %d x %d x %d cells\n",(ner->corpusseq+ner->charseq),HIDDEN_LAYER,nerdict->c); 
 }
 
 void NERtagger_delete(NERtagger*ner)
@@ -366,14 +365,14 @@ void corpus_remap(corpus*wrd,dict_t cdict,corpus*remap)
   if(wrd->b[e].fit!=-1)
    {
     const char*fit=wrd->dict->entry[wrd->b[e].fit].key;
-    int id=dict_find_index(cdict,fit);
+    int id=dict_find(cdict,fit);
     if(id!=-1)
      wrd->b[e].fitR=id;
     else
      {
-      id=dict_find_index(cdict,morph(fit,1));
+      id=dict_find(cdict,morph(fit,1));
       if(id==-1)
-       id=dict_find_index(cdict,morph(fit,0));
+       id=dict_find(cdict,morph(fit,0));
       wrd->b[e].fitR=id;
      }
    }
@@ -384,7 +383,7 @@ void corpus_remap(corpus*wrd,dict_t cdict,corpus*remap)
     if(wrd->b[e].pos!=-1)
      {
       const char*spos=wrd->posdict->entry[wrd->b[e].pos].key;
-      int id=dict_find_index(remap->posdict,spos);
+      int id=dict_find(remap->posdict,spos);
       if(id!=-1)
        wrd->b[e].pos=id;
       else
@@ -393,7 +392,7 @@ void corpus_remap(corpus*wrd,dict_t cdict,corpus*remap)
     if(wrd->b[e].ner!=-1)
      {
       const char*sner=wrd->nerdict->entry[wrd->b[e].ner].key;
-      int id=dict_find_index(remap->nerdict,sner);
+      int id=dict_find(remap->nerdict,sner);
       if(id!=-1)
        wrd->b[e].ner=id;
       else
@@ -407,11 +406,11 @@ void corpus_remap(corpus*wrd,dict_t cdict,corpus*remap)
    dict_free(wrd->posdict);
    dict_free(wrd->nerdict);
    wrd->posdict=dict_new();
-   for(n=0;n<remap->posdict->len;n++)
-    dict_add(wrd->posdict,remap->posdict->entry[n].key,remap->posdict->entry[n].value);
+   for(n=0;n<remap->posdict->c;n++)
+    dict_add(wrd->posdict,remap->posdict->entry[n].key,remap->posdict->entry[n].cnt);
    wrd->nerdict=dict_new();
-   for(n=0;n<remap->nerdict->len;n++)
-    dict_add(wrd->nerdict,remap->nerdict->entry[n].key,remap->nerdict->entry[n].value);
+   for(n=0;n<remap->nerdict->c;n++)
+    dict_add(wrd->nerdict,remap->nerdict->entry[n].key,remap->nerdict->entry[n].cnt);
   }
 }
 
@@ -527,13 +526,13 @@ void corpus_setinputlayer(NERtagger*ner,corpus*wrd,int w,bann_io*in)
      if((w+ww>=0)&&(w+ww<wrd->c)&&(wrd->b[w+ww].fitR!=-1))
       {
        int id=wrd->b[w+ww].fitR;
-       int slotid=p*(ner->cdict->len+ner->tagcnt)+ner->charseq;
+       int slotid=p*(ner->cdict->c+ner->tagcnt)+ner->charseq;
        if((slotid+id>=0)&&(slotid+id<ner->N.weights[0].ins))
        {
         in->idx->hotpos[in->idx->hotcnt++]=slotid+id;
         if(ww<0)
          if(wrd->b[w+ww].nerT!=-1)
-          in->idx->hotpos[in->idx->hotcnt++]=slotid+ner->cdict->len+wrd->b[w+ww].nerT;    
+          in->idx->hotpos[in->idx->hotcnt++]=slotid+ner->cdict->c+wrd->b[w+ww].nerT;    
          else
           odd++;
        }

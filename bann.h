@@ -37,7 +37,7 @@ extern "C" {
 typedef float         real;
 typedef unsigned char byte;
 
-#if !defined(bann_io)
+#if !defined(BANN_IO_DEFINED)
 enum {
  standard=0,
  idx=1,
@@ -61,6 +61,7 @@ typedef struct{
  };
  enum bann_iokind kind;
 }bann_io;
+#define BANN_IO_DEFINED
 #endif
 
 // ---------------------------------------------------------------------
@@ -372,7 +373,7 @@ void bann_startrnn(bann*net)
 void bann_new(bann*net,int input,int hidden,int hiddencount,int output)
 {
  int  l=0,h;
- real*ptr;
+ real*ptr,startingratio=0.25f;
  memset(net,0,sizeof(bann));
  // allocate all the weights
  net->linearsize=( ((input+1)*hidden+hidden+hidden) + 
@@ -407,7 +408,17 @@ void bann_new(bann*net,int input,int hidden,int hiddencount,int output)
 #endif
  assert((ptr-net->linear)==net->linearsize);
  // set learning rate in auto adjust mode
- bann_setlearningrate(net,1.0f,bann_optimizer_adaptive,64);
+ if(input+output<8)
+  startingratio=5.0f;
+ else if(input+output<16)
+  startingratio=2.0f;
+ else if(input+output<32)
+  startingratio=1.0f;
+ else if(input+output<128)
+  startingratio=0.5f;
+ else
+  startingratio=0.25f;
+ bann_setlearningrate(net,startingratio,bann_optimizer_adaptive,input*output);
  // build sigmoid table
  bann_buildsigmoidcache(); 
 }
@@ -487,31 +498,47 @@ void bann_optimize(bann*net,real err)
    if(net->opt.errcnt>net->opt.speed)
     {
      real expand=1.0f,lowcut=0.25f;
+     int  errlow;
+
      net->opt.errsum/=net->opt.errcnt;
+     
+     if(net->opt.errsum<0.5f) errlow=1;
+     if(errlow) 
+      if(net->opt.speed>256) 
+       net->opt.speed--;
+
      if(net->opt.errsum<lowcut)
       lowcut=net->opt.errsum;
      if(net->opt.preverrsum)
       if(net->opt.errsum>net->opt.preverrsum)
-       expand=(net->opt.preverrsum/net->opt.errsum);
+       expand=(net->opt.errsum/net->opt.preverrsum);
       else
       if(net->opt.errsum<net->opt.preverrsum) 
-       expand=(net->opt.preverrsum/net->opt.errsum);
-     if(expand<0.75f) 
-      expand=0.75f;
+       expand=(net->opt.errsum/net->opt.preverrsum);
+
+     net->opt.preverrsum=net->opt.errsum;
+     net->opt.errsum=0;net->opt.errcnt=0;
+
+     if(expand<0.25f) 
+      {
+       expand=0.25f;
+       if(errlow) 
+         net->opt.speed+=128;
+      }
      else
-      if(expand>1.15f)
-       expand=1.15f;
+      if(expand>1.75f)
+      {
+       expand=1.75f;
+       if(errlow) 
+        net->opt.speed+=128;
+      }
+
      net->opt.learningrate*=expand;
      if(net->opt.learningrate<lowcut)
-      net->opt.learningrate=lowcut;
+      net->opt.learningrate=lowcut;       
      else
      if(net->opt.learningrate>1.0f)
       net->opt.learningrate=1.0f;
-     net->opt.preverrsum=net->opt.errsum;
-     net->opt.errsum=0;
-     net->opt.errcnt=0;
-     if(net->opt.speed>64)
-      net->opt.speed--;
     }
   }
  break;
@@ -586,19 +613,24 @@ real bann_train(bann*net,const bann_io*input,const bann_io*output)
     {
      real delta=net->weights[l].d[c];
      net->weights[l].bias[c]-=delta*learningrate;
+     bann_protectbias(net->weights[l].bias[c]);
      if(l==0)
      {
       switch(input->kind)
        {
         case standard:
          for(r=0;r<net->weights[l].ins;r++)
-          net->weights[l].w[c*net->weights[l].ins+r]+=delta*learningrate*input->linear[r];
+          {
+           net->weights[l].w[c*net->weights[l].ins+r]+=delta*learningrate*input->linear[r];
+           bann_protect(net->weights[l].w[c*net->weights[l].ins+r]);
+          }
          break;
         case idx:
          for(r=0;r<input->idx->hotcnt;r++)
           {      
            int rr=input->idx->hotpos[r];
            net->weights[l].w[c*net->weights[l].ins+rr]+=delta*learningrate;
+           bann_protect(net->weights[l].w[c*net->weights[l].ins+rr]);
           }
          break;
         case fidx:
@@ -606,6 +638,7 @@ real bann_train(bann*net,const bann_io*input,const bann_io*output)
           {      
            int rr=input->fidx->hotpos[r];
            net->weights[l].w[c*net->weights[l].ins+rr]+=delta*learningrate*input->fidx->hotval[r];
+           bann_protect(net->weights[l].w[c*net->weights[l].ins+rr]);
           }
          break;
        }
@@ -613,7 +646,10 @@ real bann_train(bann*net,const bann_io*input,const bann_io*output)
      else
       {
        for(r=0;r<net->weights[l].ins;r++)
+       {
         net->weights[l].w[c*net->weights[l].ins+r]+=delta*learningrate*net->weights[l-1].o[r];
+        bann_protect(net->weights[l].w[c*net->weights[l].ins+r]);
+       }
       }
     }
   }

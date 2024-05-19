@@ -23,6 +23,7 @@ int main()
  bann_io  in,out;
 
  bann_new(&N,2,2,1,1);
+ bann_setlearningrate(&N,3.0f,bann_optimizer_off,32);
 
  in.kind=standard;
  out.kind=standard;
@@ -67,7 +68,7 @@ int main()
    for(v=0;v<4;v++)
     {
      in.linear=&input[v][0];
-     bannQ_predict(&NQ,input[v]);   
+     bannQ_predict(&NQ,&in);   
      printf("value %d: %1.f / %1.f (%.2f)\n",v+1,output[v],NQ.weights[1].o[0],NQ.weights[1].o[0]);
     }
    bannQ_delete(&NQ); 
