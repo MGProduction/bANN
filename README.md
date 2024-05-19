@@ -91,3 +91,11 @@ It's more or less the "standard" test for anns. Here a **784-48-10** ann reaches
 A more complex task, still done with a common dataset. Here to get a little more than **87.20%** accuracy you need a **784-96-10** and around **8** epochs.
 
 (same source file - you need to uncomment #define FASHION_TEST to use this instead of mnist)
+
+### TAGGER (tagger.c) 
+
+This is NOT a standard test for ann but a toy project to see how **bann_io** works (and how anns can be used to get TWO - or more - return values).  This example uses **ConLLU 2003 English dataset** to create a minimal **POS/NER tagger**. Code shows how a moving window of context is passed as input, and how two set of data (POS and NER) are retrieved as output.
+
+Input is **125741** cell wide BUT, using bann_io structure, training (and usage) keeps the average speed not too slow even on a small PC. And saving ann in a quantized way makes also the memory usage relatively small.
+
+Results - with such a simple implementation - are far from astonishing (92% for POS and 78% (F1) for NER) but here we don't use embeddings nor RNN (so everything should be faster and smaller) 
