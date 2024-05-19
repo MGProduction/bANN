@@ -61,3 +61,6 @@ build/
 *idx1-ubyte
 
 skip_*
+
+*.bann
+*.bannQ

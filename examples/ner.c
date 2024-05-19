@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <ctype.h>
 
 #define BANN_IMPLEMENTATION
 #define BANN_DEBUG
@@ -9,16 +10,13 @@
 // NER tagger configuration
 // ----------------------------------
 
-#define WINDOW_SIZE         8
-#define HIDDEN_LAYER       256
+#define WINDOW_SIZE         5
+#define HIDDEN_LAYER       64
 #define HIDDEN_LAYER_COUNT  1
 #define MAX_EPOCHS        128
-#define MSE_STOP     0.001f
+#define MSE_STOP       0.001f
 
-#define HEADTAIL_LIMIT      6
-
-//#define POSTAGGER
-//#define CHARSONLY
+#define POSTAGGER
 
 // ----------------------------------
 
@@ -36,7 +34,7 @@ const char*getwrd(const char*sz,char*wrd)
  return sz;
 }
 
-const char*morph(const char*w,int way)
+const char*_morph(const char*w,int way)
 {
  static char ww[256];
  int         i=0,j=0;
@@ -64,6 +62,128 @@ const char*morph(const char*w,int way)
  }
  ww[j]=0;
  return ww;
+}
+
+int ansi_char(const char*s,int*l)
+{
+ if(l) *l=1;
+ return (unsigned char)*s;
+}
+int ansi_char_is(const char*s,char req,int*l)
+{
+ int ch=ansi_char(s,l);
+ switch(req)
+  {
+   case 'a':
+   return isalpha(ch);
+   case 'l':
+   return islower(ch);
+   case 'u':
+   return isupper(ch);
+   case 'd':
+   return isdigit(ch);
+   case 'p':
+   return ispunct(ch);
+   case 's':
+   return isspace(ch);
+  }
+ return 0;
+}
+#define char_get(sz,pl)     ansi_char(sz,pl)
+#define char_isalpha(sz,pl) char_is(sz,'a',pl)
+#define char_isalnum(sz,pl) char_is(sz,'n',pl)
+#define char_isupper(sz,pl) char_is(sz,'u',pl)
+#define char_islower(sz,pl) char_is(sz,'l',pl)
+#define char_isdigit(sz,pl) char_is(sz,'d',pl)
+#define char_ispunct(sz,pl) char_is(sz,'p',pl)
+#define char_isspace(sz,pl) char_is(sz,'s',pl)
+#define char_iscr(sz,pl)    char_is(sz,'r',pl)
+#define char_is(s,req,l)    ansi_char_is(s,req,l)
+int str_charinset(const char*lemma, const char*set)
+{
+ int check =char_get(lemma, NULL);
+ while (set&&*set)
+ {
+  int adv,code = char_get(set,&adv);
+  if (code == check)
+   return 1;
+  else
+   set += adv;
+ }
+ return 0;
+}
+int cpos_morph(const char*wrd,char*morph,int end)
+{
+ int i=0,j=0,fend=0;
+ while(wrd[i])
+ {
+  int a,c=char_get(wrd+i,&a),code='_';
+  if(char_isdigit(wrd+i,NULL))
+   code='0';
+  else
+  if(char_isupper(wrd+i,NULL))
+   code='A';
+  else
+   if(char_islower(wrd+i,NULL))
+    code='a';
+   else
+    if(char_ispunct(wrd+i,NULL))
+     if(str_charinset(wrd+i,".,:;+-=?!()[]/\\&%$£\"'@"))
+      code=c;
+     else
+      code='^';
+    else
+     code='_';
+  if(j<24)
+   {
+    if(end<0)
+    {
+     if(j&&(morph[j-1]==code))
+      ;
+     else
+      morph[j++]=code;
+    }
+    else
+     if((j>4)&&(morph[j-1]==code)&&(morph[j-2]==code))
+      ;
+     else
+      morph[j++]=code;
+   }
+  i+=a;  
+  if(end&&(strlen(wrd+i)==end))
+   {
+    fend=1;
+    break;
+   }
+ }
+ morph[j]=0;
+ if(end==3)
+  if(fend)
+   {
+    morph[j++]='+';
+    strcpy(morph+j,wrd+i);
+   }
+  else
+   return 0;
+ else
+ if(end==2)
+  if(fend)
+   {
+    morph[j++]='+';
+    strcpy(morph+j,wrd+i);
+   }
+  else
+   return 0;
+ else
+ if(end==1)
+  if(fend)
+   {
+    morph[j++]='+';
+    strcpy(morph+j,wrd+i);
+   }
+  else
+   return 0;
+ return j;
 }
 
 int chars_compare(const void*a,const void*b)
@@ -195,24 +315,32 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t nerdict)
  ner->usedchars[2]=1;
  for(e=0;e<dict->c;e++)
   {
-   const char*wrd=dict->entry[e].key;
-   int len=(int)strlen(wrd);
+   char wrd[256];
+   int  len;
+   strcpy(wrd,dict->entry[e].key);
+   len=(int)strlen(wrd);   
    if(len>ner->maxlen)
     ner->maxlen=len;
    len=0;
+   _strlwr(wrd);
    while(wrd[len])
     {
      byte ch=(byte)wrd[len++];
-     if((ch>='A')&&(ch<='Z'))
-      ch=(ch-'A')+'a';
      ner->usedchars[ch]=1;
     }
    if(dict->entry[e].cnt>avg)
     dict_add(ner->cdict,dict->entry[e].key,dict->entry[e].cnt);
    else
     {
-     dict_add(ner->cdict,morph(dict->entry[e].key,1),dict->entry[e].cnt);
-     dict_add(ner->cdict,morph(dict->entry[e].key,0),dict->entry[e].cnt);
+     char tmp[256];
+     if(cpos_morph(dict->entry[e].key,tmp,2))
+      dict_add(ner->cdict,tmp,dict->entry[e].cnt);
+     if(cpos_morph(dict->entry[e].key,tmp,1))
+      dict_add(ner->cdict,tmp,dict->entry[e].cnt);
+     if(cpos_morph(dict->entry[e].key,tmp,0))
+      dict_add(ner->cdict,tmp,dict->entry[e].cnt);
+     if(cpos_morph(dict->entry[e].key,tmp,-1))
+      dict_add(ner->cdict,tmp,dict->entry[e].cnt);
     }
   }
  for(e=0;e<MAX_CHARS;e++)
@@ -228,18 +356,9 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t nerdict)
 
  ner->window_size=WINDOW_SIZE;
  ner->tagcnt=nerdict->c;
-#if defined(CHARSONLY)
- ner->charseq=(ner->ichars*(HEADTAIL_LIMIT*2)+1+1);
- ner->corpusseq=ner->charseq*(ner->window_size*2+1);
- bann_new(&ner->N,ner->corpusseq,HIDDEN_LAYER,HIDDEN_LAYER_COUNT,nerdict->c);
-#else
- if(HEADTAIL_LIMIT)
-  ner->charseq=(ner->ichars*(HEADTAIL_LIMIT*2));
- else
-  ner->charseq=(ner->ichars*ner->maxlen);
- ner->corpusseq=(ner->cdict->c+ner->tagcnt)*(ner->window_size*2+1);
- bann_new(&ner->N,(ner->corpusseq+ner->charseq),HIDDEN_LAYER,1,nerdict->c);
-#endif
+ ner->corpusseq=(ner->cdict->c+ner->tagcnt+2)*(ner->window_size*2+1);
+
+ bann_new(&ner->N,ner->corpusseq,HIDDEN_LAYER,1,nerdict->c);
 
  printf("creating bANN with %d x %d x %d cells\n",(ner->corpusseq+ner->charseq),HIDDEN_LAYER,nerdict->c); 
 }
@@ -364,16 +483,29 @@ void corpus_remap(corpus*wrd,dict_t cdict,corpus*remap)
  {
   if(wrd->b[e].fit!=-1)
    {
-    const char*fit=wrd->dict->entry[wrd->b[e].fit].key;
-    int id=dict_find(cdict,fit);
+    char fit[256];
+    int  id;
+    strcpy(fit,wrd->dict->entry[wrd->b[e].fit].key);
+    _strlwr(fit);
+    id=dict_find(cdict,fit);
     if(id!=-1)
      wrd->b[e].fitR=id;
     else
      {
-      id=dict_find(cdict,morph(fit,1));
-      if(id==-1)
-       id=dict_find(cdict,morph(fit,0));
-      wrd->b[e].fitR=id;
+      char tmp[256];
+      if(cpos_morph(fit,tmp,2)&&((id=dict_find(cdict,tmp))!=-1))
+       wrd->b[e].fitR=id;
+      else
+       if(cpos_morph(fit,tmp,1)&&((id=dict_find(cdict,tmp))!=-1))
+        wrd->b[e].fitR=id;
+       else
+        if(cpos_morph(fit,tmp,0)&&((id=dict_find(cdict,tmp))!=-1))
+         wrd->b[e].fitR=id;
+        else
+         if(cpos_morph(fit,tmp,-1)&&((id=dict_find(cdict,tmp))!=-1))
+          wrd->b[e].fitR=id;
+         else
+          wrd->b[e].fitR=-1;
      }
    }
   else
@@ -416,132 +548,53 @@ void corpus_remap(corpus*wrd,dict_t cdict,corpus*remap)
 
 void corpus_setinputlayer(NERtagger*ner,corpus*wrd,int w,bann_io*in)
 {
- int        ww,p,odd=0;
+ int ww,odd=0,pos=0;
  in->idx->hotcnt=0;
-#if defined(CHARSONLY)
- for(p=0,ww=-ner->window_size;ww<=ner->window_size;ww++)
+ // add context window CASE
+ for(ww=-ner->window_size;ww<=ner->window_size;ww++)
   {
-   int base=p*ner->charseq;
    if((w+ww>=0)&&(w+ww<wrd->c)&&(wrd->b[w+ww].fitR!=-1))
     {
      const char*fit=wrd->dict->entry[wrd->b[w].fit].key;
-     int        c,cc,id,up=0;
-     
+     int        c,up=0,fup=0;
      for(c=0;fit[c];c++)
       {
        byte ch=(byte)fit[c];
        if((ch>='A')&&(ch<='Z'))
-        up++;
+        {
+         up++;
+         if(c==0)
+          fup=1;
+        }
       }     
-     if(up==1)
-      in->idx->hotpos[in->idx->hotcnt++]=base;
-     if(up>1)
-      in->idx->hotpos[in->idx->hotcnt++]=base+1;
-     base+=2;
-
-     for(c=0;fit[c];c++)
-      if(c<HEADTAIL_LIMIT)
-       {
-        byte ch=(byte)fit[c];
-        if((ch>='A')&&(ch<='Z'))
-         ch=(ch-'A')+'a';
-        id=ner->usedchars[ch];
-        if(id!=255)
-         in->idx->hotpos[in->idx->hotcnt++]=base+c*ner->ichars+id;
-        else
-         odd++;
-       }
-      else
-       break;
-     c=(int)strlen(fit);cc=0;
-     while(c--)
-      {
-       byte ch=(byte)fit[c];
-       if((ch>='A')&&(ch<='Z'))
-        ch=(ch-'A')+'a';
-       id=ner->usedchars[ch];
-       if(id!=255)
-        in->idx->hotpos[in->idx->hotcnt++]=base+(HEADTAIL_LIMIT+cc*ner->ichars)+id;
-       else
-        odd++;
-       cc++;
-       if(cc==HEADTAIL_LIMIT)
-        break;
-      }
+     if(fup==1) // Up
+      in->idx->hotpos[in->idx->hotcnt++]=pos;
+     if(up>1)   // UP
+      in->idx->hotpos[in->idx->hotcnt++]=pos+1;
     }
-   p++;
+   pos+=2;
   }
-#else
- // add word chars
- if(ner->ichars)
+ // add context window POS
+ for(ww=-ner->window_size;ww<=ner->window_size;ww++)
   {
-   int        c,cc=0;
-   const char*fit=wrd->dict->entry[wrd->b[w].fit].key;
-   if(HEADTAIL_LIMIT)
+   if((w+ww>=0)&&(w+ww<wrd->c)&&(wrd->b[w+ww].fitR!=-1))
     {
-     for(c=0;fit[c];c++)
-      if(c<HEADTAIL_LIMIT)
-       {
-        int id=ner->usedchars[(byte)fit[c]];
-        if(id!=255)
-         in->idx->hotpos[in->idx->hotcnt++]=c*ner->ichars+id;
-        else
-         odd++;
-       }
-      else
-       break;
-     c=(int)strlen(fit);
-     while(c--)
-      {
-       int id=ner->usedchars[(byte)fit[c]];
-       if(id!=255)
-        in->idx->hotpos[in->idx->hotcnt++]=(HEADTAIL_LIMIT+cc*ner->ichars)+id;
-       else
-        odd++;
-       cc++;
-       if(cc==HEADTAIL_LIMIT)
-        break;
-      }
+     if(ww<0)
+      if(wrd->b[w+ww].nerT!=-1)
+       in->idx->hotpos[in->idx->hotcnt++]=pos+wrd->b[w+ww].nerT;    
     }
-   else
-    {
-     for(c=0;fit[c];c++)
-      if(c<ner->maxlen)
-       {
-        int id=ner->usedchars[(byte)fit[c]];
-        if(id!=255)
-         in->idx->hotpos[in->idx->hotcnt++]=c*ner->ichars+id;
-        else
-         odd++;
-       }
-      else
-       break;
-    }
+   pos+=ner->tagcnt;
   }
- // add context window        
- if(ner->window_size)
-  for(p=0,ww=-ner->window_size;ww<=ner->window_size;ww++)
-   //if(ww)
+ // add context window WORDS / MORPH
+ for(ww=-ner->window_size;ww<=ner->window_size;ww++)
+  {
+   if((w+ww>=0)&&(w+ww<wrd->c)&&(wrd->b[w+ww].fitR!=-1))
     {
-     if((w+ww>=0)&&(w+ww<wrd->c)&&(wrd->b[w+ww].fitR!=-1))
-      {
-       int id=wrd->b[w+ww].fitR;
-       int slotid=p*(ner->cdict->c+ner->tagcnt)+ner->charseq;
-       if((slotid+id>=0)&&(slotid+id<ner->N.weights[0].ins))
-       {
-        in->idx->hotpos[in->idx->hotcnt++]=slotid+id;
-        if(ww<0)
-         if(wrd->b[w+ww].nerT!=-1)
-          in->idx->hotpos[in->idx->hotcnt++]=slotid+ner->cdict->c+wrd->b[w+ww].nerT;    
-         else
-          odd++;
-       }
-       else
-        odd++;
-      }
-     p++;
+     int id=wrd->b[w+ww].fitR;
+     in->idx->hotpos[in->idx->hotcnt++]=pos+id;    
     }
-#endif
+   pos+=ner->cdict->c;
+  }
 }
 
 void ner_qual(int*good,int*add,int*miss,int hm,real*acc,real*prec,real*recall,real*F1)
