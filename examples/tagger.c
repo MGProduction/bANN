@@ -13,7 +13,7 @@
 #define WINDOW_SIZE         5
 #define HIDDEN_LAYER       64
 #define HIDDEN_LAYER_COUNT  1
-#define MAX_EPOCHS         16
+#define MAX_EPOCHS         32
 #define MSE_STOP       0.001f
 
 // ----------------------------------
@@ -410,10 +410,10 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t*tagdict)
  ner->chunkcnt=tagdict[1]->c;
  ner->nercnt=tagdict[2]->c;
  
- ner->corpusseq=(ner->cdict->c+ner->poscnt+ner->chunkcnt+ner->nercnt+2)*(ner->window_size*2+1);
+ ner->corpusseq=((ner->cdict->c+1)+ner->poscnt+ner->chunkcnt+ner->nercnt+3)*(ner->window_size*2+1);
 
  bann_new(&ner->N,ner->corpusseq,HIDDEN_LAYER,HIDDEN_LAYER_COUNT,ner->poscnt+ner->chunkcnt+ner->nercnt);
- //bann_setlearningrate(&ner->N,1.0f,bann_optimizer_decay,96*1024);
+ bann_setlearningrate(&ner->N,1.0f,bann_optimizer_decay,96*1024);
 
  if(HIDDEN_LAYER_COUNT>1)
   printf("creating bANN with %d x %d (%d) x %d cells\n",ner->corpusseq,HIDDEN_LAYER,HIDDEN_LAYER_COUNT,ner->poscnt+ner->chunkcnt+ner->nercnt); 
@@ -639,7 +639,7 @@ void corpus_setinputlayer(NERtagger*ner,corpus*wrd,int cl,int w,bann_io*in)
    if((w+ww>=lc->from)&&(w+ww<lc->to)&&(wrd->wrd.b[w+ww].fit!=-1))
     {
      const char*fit=wrd->dict->entry[wrd->wrd.b[w].fit].key;
-     int        c,up=0,fup=0;
+     int        c,up=0,fup=0,low=0,dig=0;
      for(c=0;fit[c];c++)
       {
        byte ch=(byte)fit[c];
@@ -649,13 +649,21 @@ void corpus_setinputlayer(NERtagger*ner,corpus*wrd,int cl,int w,bann_io*in)
          if(c==0)
           fup=1;
         }
+       else
+        if((ch>='a')&&(ch<='z'))
+         low++;
+        else
+         if((ch>='0')&&(ch<='9'))
+          dig++;
       }     
      if(fup==1) // Up
       in->idx->hotpos[in->idx->hotcnt++]=pos;
      if(up>1)   // UP
       in->idx->hotpos[in->idx->hotcnt++]=pos+1;
+     if(dig)   // UP
+      in->idx->hotpos[in->idx->hotcnt++]=pos+2;
     }
-   pos+=2;
+   pos+=3;
   }
  // add context window POS
  for(ww=-ner->window_size;ww<=ner->window_size;ww++)
@@ -679,11 +687,10 @@ void corpus_setinputlayer(NERtagger*ner,corpus*wrd,int cl,int w,bann_io*in)
  // add context window WORDS / MORPH
  for(ww=-ner->window_size;ww<=ner->window_size;ww++)
   {
+   int id=0;
    if((w+ww>=lc->from)&&(w+ww<lc->to)&&(wrd->wrd.b[w+ww].fitR!=-1))
-    {
-     int id=wrd->wrd.b[w+ww].fitR;
-     in->idx->hotpos[in->idx->hotcnt++]=pos+id;    
-    }
+    id=wrd->wrd.b[w+ww].fitR+1;
+   in->idx->hotpos[in->idx->hotcnt++]=pos+id;    
    pos+=ner->cdict->c;
   }
 }
@@ -695,7 +702,7 @@ void ner_qual(int*good,int*add,int*miss,int*start,real*F1,int rcnt)
   {
    real gprec=0,grecall=0,gacc=0;
    int  i=0,ggood=0,gmiss=0,gadd=0,cnt=0,tgood=0,tadd=0,tmiss=0;
-   for(i=start[r];i<start[r+1];i++) // skip O
+   for(i=start[r]+(r==2);i<start[r+1];i++) // skip O
     {
      ggood=good[i];
      gmiss=miss[i];
@@ -810,19 +817,36 @@ void corpus_predict(NERtagger*ner,bann_io*in,corpus*wrdA,const char*name,const c
     fprintf(f,"\n");
   }
  ner_qual(goodN,addN,missN,start,F1,3);
- printf("[%s] Q: %.2f - POS: %.2f CHUNK: %.2f NER: %.2f \n",name,(float)good*100/(float)(good+bad),F1[0],F1[1],F1[2]);
+ sprintf(what,"[%s] Q: %.2f - POS: %.2f CHUNK: %.2f NER: %.2f",name,(float)good*100/(float)(good+bad),F1[0],F1[1],F1[2]);
  
- sprintf(what,"[%s] %s \n",name);
+ printf("%s \n",what);
  history_add(&ner->N,"bin/bann.log",name,what);
 
  if(f)
   {
-   int i;
+   int i,ii;
    fprintf(f,"\n[ERRORS]\n");
    qsort(errorlist->entry,errorlist->c,sizeof(errorlist->entry[0]),dictentry_compare);
    for(i=0;i<errorlist->c;i++)
     fprintf(f,"%s\t%d\n",errorlist->entry[i].key,errorlist->entry[i].cnt);
    dict_free(errorlist);
+   fprintf(f,"\n[RESULTS]\n");
+   fprintf(f,"TAG\tF1\tPREC\tRECALL\tGOOD\tADD\tMISS\n");
+   for(ii=0;ii<3;ii++)
+    {
+     for(i=0;i<wrdA->tagdict[ii]->c;i++)
+     {
+      int   good=goodN[start[ii]+i],miss=missN[start[ii]+i],add=addN[start[ii]+i];
+      if(good)
+       {
+        float prec=good*100.0f/(good+add);
+        float recall=good*100.0f/(good+miss);
+        float F1=2*prec*recall/(prec+recall);
+        fprintf(f,"%s\t%.2f\t%.2f\t%.2f\t%d\t%d\t%d\n",wrdA->tagdict[ii]->entry[i].key,F1,prec,recall,good,add,miss);
+       }
+     }
+     fprintf(f,"\n");
+    }
    fclose(f);
   }
 }
@@ -970,19 +994,19 @@ int main(int argc,const char*argv[])
 
    // when ready, check quality (and save)
    if((err<0.05f)||(e+1==MAX_EPOCHS))
+    corpus_predict(&NER,&in,&dev,"eng.dev","bin/eng.dev.log");
+   if((err<0.02f)||(e+1==MAX_EPOCHS))
+    corpus_predict(&NER,&in,&test,"eng.test","bin/eng.test.log");         
+   if(err<lasterr)
     {
-     corpus_predict(&NER,&in,&dev,"eng.dev","bin/eng.dev.log");
-     corpus_predict(&NER,&in,&test,"eng.test","bin/eng.test.log");    
-     if(err<lasterr)
-     {
-      bann_write(&NER.N,"bin/ner.bann",0);
-      bann_write(&NER.N,"bin/ner.bannQ",1);
-      lasterr=err;
-      if(err<MSE_STOP)
-       break;
-     }     
-    }
+     bann_write(&NER.N,"bin/ner.bann",0);
+     bann_write(&NER.N,"bin/ner.bannQ",1);
+     lasterr=err;
+     if(err<MSE_STOP)
+      break;
+    }     
    // change optimization when lower than 0.05f
+   if(0)
    if(err<0.05f)
      if(NER.N.opt.optimize==bann_optimizer_decay)
       NER.N.opt.optimize=bann_optimizer_adaptive;
