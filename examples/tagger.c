@@ -11,9 +11,9 @@
 // ----------------------------------
 
 #define WINDOW_SIZE         5
-#define HIDDEN_LAYER       96
+#define HIDDEN_LAYER       64
 #define HIDDEN_LAYER_COUNT  1
-#define MAX_EPOCHS        128
+#define MAX_EPOCHS         16
 #define MSE_STOP       0.001f
 
 // ----------------------------------
@@ -213,26 +213,21 @@ int chars_compare(const void*a,const void*b)
  return (*(char*)a)-(*(char*)b);
 }
 
-int bann_getPOSNER(bann*net,int split,int*pos,int*ner)
+int bann_getPOSCHUNKNER(bann*net,int*start,int*sel,int rcnt)
 {
- int  i,best=-1,hm=net->weights[net->weightscount-1].outs;
+ int  i,best=-1,r;
  real top,*v=net->weights[net->weightscount-1].o;
- best=-1;
- for(i=0;i<split;i++)
-  if((best==-1)||(v[i]>top))
+ for(r=0;r<rcnt;r++)
   {
-   best=i;
-   top=net->weights[net->weightscount-1].o[i];
+   best=-1;
+   for(i=start[r];i<start[r+1];i++)
+    if((best==-1)||(v[i]>top))
+    {
+     best=i;
+     top=net->weights[net->weightscount-1].o[i];
+    }
+   if(sel) sel[r]=best-start[r];
   }
- if(pos) *pos=best;
- best=-1;
- for(;i<hm;i++)
-  if((best==-1)||(v[i]>top))
-  {
-   best=i;
-   top=net->weights[net->weightscount-1].o[i];
-  }
- if(ner) *ner=best-split;
  return best;
 }
 
@@ -322,13 +317,13 @@ void dict_emit(const char*head,dict_t d)
 typedef struct{
  bann   N;
  dict_t cdict;
- int    ichars,charseq,corpusseq,maxlen,window_size,poscnt,nercnt;
+ int    ichars,charseq,corpusseq,maxlen,window_size,poscnt,chunkcnt,nercnt;
  byte   usedchars[MAX_CHARS];
 }NERtagger;
 
-void NERtagger_new(NERtagger*ner,dict_t dict,dict_t posdict,dict_t nerdict)
+void NERtagger_new(NERtagger*ner,dict_t dict,dict_t*tagdict)
 {
- int  e,sum=0,avg=0,top=0;
+ int  e,sum=0,avg=0,top=0,avg2,ttop;
  char chars[MAX_CHARS];
  dict_t tdict=dict_new();
 
@@ -343,7 +338,8 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t posdict,dict_t nerdict)
    sum+=dict->entry[e].cnt;
   }
  avg=(sum-top)/(dict->c-1);
- avg=max(2,avg/2);
+ avg2=max(2,avg/4);
+ ttop=top*80/100;
  
  ner->usedchars[2]=1;
  for(e=0;e<dict->c;e++) 
@@ -363,21 +359,21 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t posdict,dict_t nerdict)
      byte ch=(byte)wrd[len++];
      ner->usedchars[ch]=1;
     }
-   if(dict->entry[e].cnt>avg)
+   if(dict->entry[e].cnt>avg2)
     dict_add(ner->cdict,dict->entry[e].key,dict->entry[e].cnt);
-   else
+   if(dict->entry[e].cnt<ttop)
     {
      char tmp[256];
      if(cpos_morph(dict->entry[e].key,tmp,3))
-      dict_add(tdict,tmp,dict->entry[e].cnt);
+      dict_add(tdict,tmp,1);
      if(cpos_morph(dict->entry[e].key,tmp,2))
-      dict_add(tdict,tmp,dict->entry[e].cnt);
+      dict_add(tdict,tmp,1);
      if(cpos_morph(dict->entry[e].key,tmp,1))
-      dict_add(tdict,tmp,dict->entry[e].cnt);
+      dict_add(tdict,tmp,1);
      if(cpos_morph(dict->entry[e].key,tmp,0))
-      dict_add(tdict,tmp,dict->entry[e].cnt);
+      dict_add(tdict,tmp,1);
      if(cpos_morph(dict->entry[e].key,tmp,-1))
-      dict_add(tdict,tmp,dict->entry[e].cnt);
+      dict_add(tdict,tmp,1);
     }
   }
 
@@ -389,7 +385,6 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t posdict,dict_t nerdict)
    sum+=tdict->entry[e].cnt;
   }
  avg=(sum-top)/(tdict->c-1);
- avg=max(2,avg/2);
 
  for(e=0;e<tdict->c;e++) 
   if(tdict->entry[e].cnt>avg)
@@ -410,17 +405,20 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t posdict,dict_t nerdict)
  qsort(chars,ner->ichars,sizeof(chars[0]),chars_compare);
 
  ner->window_size=WINDOW_SIZE;
- ner->poscnt=posdict->c;
- ner->nercnt=nerdict->c;
- ner->corpusseq=(ner->cdict->c+ner->poscnt+ner->nercnt+2)*(ner->window_size*2+1);
+ 
+ ner->poscnt=tagdict[0]->c;
+ ner->chunkcnt=tagdict[1]->c;
+ ner->nercnt=tagdict[2]->c;
+ 
+ ner->corpusseq=(ner->cdict->c+ner->poscnt+ner->chunkcnt+ner->nercnt+2)*(ner->window_size*2+1);
 
- bann_new(&ner->N,ner->corpusseq,HIDDEN_LAYER,HIDDEN_LAYER_COUNT,ner->poscnt+ner->nercnt);
- bann_setlearningrate(&ner->N,1.0f,bann_optimizer_decay,64*1024);
+ bann_new(&ner->N,ner->corpusseq,HIDDEN_LAYER,HIDDEN_LAYER_COUNT,ner->poscnt+ner->chunkcnt+ner->nercnt);
+ //bann_setlearningrate(&ner->N,1.0f,bann_optimizer_decay,96*1024);
 
  if(HIDDEN_LAYER_COUNT>1)
-  printf("creating bANN with %d x %d (%d) x %d cells\n",(ner->corpusseq+ner->charseq),HIDDEN_LAYER,HIDDEN_LAYER_COUNT,ner->poscnt+ner->nercnt); 
+  printf("creating bANN with %d x %d (%d) x %d cells\n",ner->corpusseq,HIDDEN_LAYER,HIDDEN_LAYER_COUNT,ner->poscnt+ner->chunkcnt+ner->nercnt); 
  else
-  printf("creating bANN with %d x %d x %d cells\n",(ner->corpusseq+ner->charseq),HIDDEN_LAYER,ner->poscnt+ner->nercnt); 
+  printf("creating bANN with %d x %d x %d cells\n",ner->corpusseq,HIDDEN_LAYER,ner->poscnt+ner->chunkcnt+ner->nercnt); 
 }
 
 void NERtagger_delete(NERtagger*ner)
@@ -434,10 +432,7 @@ void NERtagger_delete(NERtagger*ner)
 
 typedef struct{
  int fit,fitR;
- int pos;
- int posT;
- int ner;
- int nerT;
+ int tag[3],tagT[3];
 }word;
 typedef struct{
  word*b;
@@ -455,13 +450,14 @@ typedef struct{
  clauses cl;
 
  dict_t  dict;
- dict_t  posdict;
- dict_t  nerdict;
+ dict_t  tagdict[3];
 
 }corpus;
 
 void corpus_new(corpus*w)
 {
+ int i;
+
  w->wrd.c=0;w->wrd.m=256;
  w->wrd.b=(word*)malloc(w->wrd.m*sizeof(w->wrd.b[0]));
  
@@ -470,19 +466,18 @@ void corpus_new(corpus*w)
 
  w->dict=dict_new();
  
- w->posdict=dict_new();
- dict_add(w->posdict,"$BOS$",0);
- dict_add(w->posdict,"$BOS$",0);
+ for(i=0;i<3;i++)
+  w->tagdict[i]=dict_new();
 
- w->nerdict=dict_new();
- dict_add(w->nerdict,"O",0);
+ dict_add(w->tagdict[2],"O",0); // added to be sure it's the FIRST
 }
 
 void corpus_delete(corpus*w)
 {
+ int i;
  dict_free(w->dict);
- dict_free(w->posdict);
- dict_free(w->nerdict);
+ for(i=0;i<3;i++)
+  dict_free(w->tagdict[i]);
  free(w->wrd.b);
  free(w->cl.b);
 }
@@ -516,7 +511,7 @@ int corpus_read(corpus*w,const char*name)
    int from=0;
    while(!feof(f))
    {
-    char       line[1024],wrd[256],ner[256],tmp[256],pos[256];
+    char       line[1024],wrd[256],tag[256];
     const char*next;
     int        i;
     word       ww;
@@ -542,12 +537,11 @@ int corpus_read(corpus*w,const char*name)
       next=getwrd(line,wrd);
       ww.fit=dict_add(w->dict,wrd,1);
 
-      next=getwrd(next,pos);
-      ww.pos=dict_add(w->posdict,pos,1);
-
-      next=getwrd(next,tmp);
-      next=getwrd(next,ner);      
-      ww.ner=dict_add(w->nerdict,ner,1);
+      for(i=0;i<3;i++)
+       {
+        next=getwrd(next,tag);
+        ww.tag[i]=dict_add(w->tagdict[i],tag,1);
+       }
 
       corpus_addword(w,&ww);
      }
@@ -608,37 +602,29 @@ void corpus_remap(corpus*crp,dict_t cdict,corpus*remap)
    crp->wrd.b[e].fitR=-1;
   if(remap)
    {
-    if(crp->wrd.b[e].pos!=-1)
-     {
-      const char*spos=crp->posdict->entry[crp->wrd.b[e].pos].key;
-      int id=dict_find(remap->posdict,spos);
-      if(id!=-1)
-       crp->wrd.b[e].pos=id;
-      else
-       err++;
-     }
-    if(crp->wrd.b[e].ner!=-1)
-     {
-      const char*sner=crp->nerdict->entry[crp->wrd.b[e].ner].key;
-      int id=dict_find(remap->nerdict,sner);
-      if(id!=-1)
-       crp->wrd.b[e].ner=id;
-      else
-       err++;
-     }
+    int i;
+    for(i=0;i<3;i++)
+     if(crp->wrd.b[e].tag[i]!=-1)
+      {
+       const char*spos=crp->tagdict[i]->entry[crp->wrd.b[e].tag[i]].key;
+       int id=dict_find(remap->tagdict[i],spos);
+       if(id!=-1)
+        crp->wrd.b[e].tag[i]=id;
+       else
+        err++;
+      }
    }
  }
  if(remap)
   {
-   int n;
-   dict_free(crp->posdict);
-   dict_free(crp->nerdict);
-   crp->posdict=dict_new();
-   for(n=0;n<remap->posdict->c;n++)
-    dict_add(crp->posdict,remap->posdict->entry[n].key,remap->posdict->entry[n].cnt);
-   crp->nerdict=dict_new();
-   for(n=0;n<remap->nerdict->c;n++)
-    dict_add(crp->nerdict,remap->nerdict->entry[n].key,remap->nerdict->entry[n].cnt);
+   int n,i;
+   for(i=0;i<3;i++)
+    {
+     dict_free(crp->tagdict[i]);
+     crp->tagdict[i]=dict_new();
+     for(n=0;n<remap->tagdict[i]->c;n++)
+      dict_add(crp->tagdict[i],remap->tagdict[i]->entry[n].key,remap->tagdict[i]->entry[n].cnt);
+    }
   }
 }
 
@@ -676,13 +662,18 @@ void corpus_setinputlayer(NERtagger*ner,corpus*wrd,int cl,int w,bann_io*in)
   {
    if(ww<0)
     if((w+ww>=lc->from)&&(w+ww<lc->to))
-     if(wrd->wrd.b[w+ww].posT!=-1)
-      in->idx->hotpos[in->idx->hotcnt++]=pos+wrd->wrd.b[w+ww].posT;    
+     if(wrd->wrd.b[w+ww].tagT[0]!=-1)
+      in->idx->hotpos[in->idx->hotcnt++]=pos+wrd->wrd.b[w+ww].tagT[0];    
    pos+=ner->poscnt;
    if(ww<0)
     if((w+ww>=lc->from)&&(w+ww<lc->to))
-     if(wrd->wrd.b[w+ww].nerT!=-1)
-      in->idx->hotpos[in->idx->hotcnt++]=pos+wrd->wrd.b[w+ww].nerT;    
+     if(wrd->wrd.b[w+ww].tagT[1]!=-1)
+      in->idx->hotpos[in->idx->hotcnt++]=pos+wrd->wrd.b[w+ww].tagT[1];    
+   pos+=ner->chunkcnt;
+   if(ww<0)
+    if((w+ww>=lc->from)&&(w+ww<lc->to))
+     if(wrd->wrd.b[w+ww].tagT[2]!=-1)
+      in->idx->hotpos[in->idx->hotcnt++]=pos+wrd->wrd.b[w+ww].tagT[2];    
    pos+=ner->nercnt;
   }
  // add context window WORDS / MORPH
@@ -697,38 +688,60 @@ void corpus_setinputlayer(NERtagger*ner,corpus*wrd,int cl,int w,bann_io*in)
   }
 }
 
-void ner_qual(int*good,int*add,int*miss,int from,int hm,real*acc,real*prec,real*recall,real*F1)
+void ner_qual(int*good,int*add,int*miss,int*start,real*F1,int rcnt)
 {
- real gprec=0,grecall=0,gacc=0;
- int  i=0,ggood=0,gmiss=0,gadd=0,cnt=0,tgood=0,tadd=0,tmiss=0;
- for(i=from;i<hm;i++) // skip O
+ int r;
+ for(r=0;r<rcnt;r++)
   {
-   ggood=good[i];
-   gmiss=miss[i];
-   gadd=add[i];
-   tgood+=good[i];
-   tmiss+=miss[i];
-   tadd+=add[i];
+   real gprec=0,grecall=0,gacc=0;
+   int  i=0,ggood=0,gmiss=0,gadd=0,cnt=0,tgood=0,tadd=0,tmiss=0;
+   for(i=start[r];i<start[r+1];i++) // skip O
+    {
+     ggood=good[i];
+     gmiss=miss[i];
+     gadd=add[i];
+     tgood+=good[i];
+     tmiss+=miss[i];
+     tadd+=add[i];
+    }
+   gprec=tgood*100.0f/(tgood+tadd);
+   grecall=tgood*100.0f/(tgood+tmiss);
+   gacc=(float)(tgood)*100.0f/(float)(tgood+tmiss+tadd);
+   //if(acc) *acc=gacc;
+   //if(prec) *prec=gprec;
+   //if(recall) *recall=grecall;
+   if(F1) F1[r]=2*gprec*grecall/(gprec+grecall);
   }
- gprec=tgood*100.0f/(tgood+tadd);
- grecall=tgood*100.0f/(tgood+tmiss);
- gacc=(float)(tgood)*100.0f/(float)(tgood+tmiss+tadd);
- if(acc) *acc=gacc;
- if(prec) *prec=gprec;
- if(recall) *recall=grecall;
- if(F1) *F1=2*gprec*grecall/(gprec+grecall);
+}
+
+int dictentry_compare(const void*a,const void*b)
+{
+ dict_entry_s*A=(dict_entry_s*)a;
+ dict_entry_s*B=(dict_entry_s*)b;
+ return B->cnt-A->cnt;
 }
 
 void corpus_predict(NERtagger*ner,bann_io*in,corpus*wrdA,const char*name,const char*outname)
 {
  bann*N=&ner->N;
- real acc,prec,recall,F1,F1pos;
- int  cl,goodN[256],missN[256],addN[256],w,cnt=0,hmNER=N->weights[N->weightscount-1].outs; 
+ real F1[3];
+ int  cl,goodN[256],missN[256],addN[256],w,cnt=0,hmNER=N->weights[N->weightscount-1].outs,good=0,bad=0; 
  FILE*f=NULL;
+ int  start[4];
  char what[256];
+ char tagname[3][8]={"POS","CHUNK","NER"};
+ dict_t errorlist;
+ 
+ start[0]=0;
+ start[1]=start[0]+ner->poscnt;
+ start[2]=start[1]+ner->chunkcnt;
+ start[3]=start[2]+ner->nercnt; 
 
  if(outname)
+ {
   f=fopen(outname,"wb");
+  errorlist=dict_new();
+ }
  
  memset(goodN,0,hmNER*sizeof(goodN[0]));
  memset(missN,0,hmNER*sizeof(missN[0]));
@@ -742,59 +755,76 @@ void corpus_predict(NERtagger*ner,bann_io*in,corpus*wrdA,const char*name,const c
      corpus_setinputlayer(ner,wrdA,cl,w,in);           
      if(in->idx->hotcnt)
       {
-       int        selPOS,correctPOS=wrdA->wrd.b[w].pos;
-       int        selNER,correctNER=wrdA->wrd.b[w].ner;
+       int        g,ii,sel[3],correct[3];
        const char*fit=wrdA->dict->entry[wrdA->wrd.b[w].fit].key;
-       const char*szpos=wrdA->posdict->entry[correctPOS].key;
-       const char*szner=wrdA->nerdict->entry[correctNER].key;
-       
+
+       for(ii=0;ii<3;ii++)
+        correct[ii]=wrdA->wrd.b[w].tag[ii];
+                           
        bann_predict(N,in);
 
-       bann_getPOSNER(N,ner->poscnt,&selPOS,&selNER);
+       bann_getPOSCHUNKNER(&ner->N,&start[0],&sel[0],3);
 
-       if(selNER==correctNER)
-        goodN[selNER]++;
-       else
-        {
-         addN[selNER]++;
-         missN[correctNER]++;
-        }       
+       for(g=ii=0;ii<3;ii++)
+        if(sel[ii]==correct[ii])
+         {goodN[start[ii]+sel[ii]]++;g++;}
+        else
+         {
+          addN[start[ii]+sel[ii]]++;
+          missN[start[ii]+correct[ii]]++;
+         }   
 
-       if(selPOS==correctPOS)
-        goodN[ner->nercnt+selPOS]++;
+       if(g==ii)
+        good++;
        else
-        {
-         addN[ner->nercnt+selPOS]++;
-         missN[ner->nercnt+correctPOS]++;
-        }   
+        bad++;
+                
+       for(ii=0;ii<3;ii++)
+        wrdA->wrd.b[w].tagT[ii]=sel[ii];
 
        if(f)
-        if((selPOS==correctPOS)&&(selNER==correctNER))
-         fprintf(f,"%s\t%s\t%s\n",fit,szpos,szner);
+        if((sel[0]==correct[0])&&(sel[1]==correct[1])&&(sel[2]==correct[2]))
+         fprintf(f,"%s\t%s\t%s\n",fit,wrdA->tagdict[0]->entry[correct[0]].key,wrdA->tagdict[1]->entry[correct[1]].key,wrdA->tagdict[2]->entry[correct[2]].key);
         else
-         fprintf(f,"%s\t%s\t%s\t%s\t%s\n",fit,szpos,szner,wrdA->posdict->entry[selPOS].key,wrdA->nerdict->entry[selNER].key);
+         {
+          char out[256];
+          for(ii=0;ii<3;ii++)
+           if(sel[ii]!=correct[ii])
+            {
+             sprintf(out,"%s\t%s\t%s",tagname[ii],wrdA->tagdict[ii]->entry[correct[ii]].key,wrdA->tagdict[ii]->entry[sel[ii]].key);
+             dict_add(errorlist,out,1);
+            }
+          fprintf(f,"%s\t%s\t%s\t%s\t%s\t%s\t%s ***\n",fit,wrdA->tagdict[0]->entry[correct[0]].key,wrdA->tagdict[1]->entry[correct[1]].key,wrdA->tagdict[2]->entry[correct[2]].key,
+                                                           wrdA->tagdict[0]->entry[sel[0]].key,wrdA->tagdict[1]->entry[sel[1]].key,wrdA->tagdict[2]->entry[sel[2]].key);
+         }
        
-       wrdA->wrd.b[w].posT=selPOS;
-       wrdA->wrd.b[w].nerT=selNER;
-
        cnt++;
        if((cnt&0xFF)==0xFF)
        {
-        ner_qual(goodN,addN,missN,1,ner->nercnt,&acc,&prec,&recall,&F1);
-        ner_qual(goodN,addN,missN,ner->nercnt,ner->nercnt+ner->poscnt,NULL,NULL,NULL,&F1pos);
-        printf("[%s] NER: F1: %.2f P: %.2f R: %.2f - POS: %.2f \r",name,F1,prec,recall,F1pos);
+        ner_qual(goodN,addN,missN,start,F1,3);
+        printf("[%s] Q: %.2f - POS: %.2f CHUNK: %.2f NER: %.2f \r",name,(float)good*100/(float)(good+bad),F1[0],F1[1],F1[2]);
        }
       }
     }
+   if(f)
+    fprintf(f,"\n");
   }
- ner_qual(goodN,addN,missN,1,ner->nercnt,&acc,&prec,&recall,&F1);
- ner_qual(goodN,addN,missN,ner->nercnt,ner->nercnt+ner->poscnt,NULL,NULL,NULL,&F1pos);
- sprintf(what,"NER: F1: %.2f P: %.2f R: %.2f - POS: %.2f ",F1,prec,recall,F1pos);
- printf("[%s] %s \n",name,what);
+ ner_qual(goodN,addN,missN,start,F1,3);
+ printf("[%s] Q: %.2f - POS: %.2f CHUNK: %.2f NER: %.2f \n",name,(float)good*100/(float)(good+bad),F1[0],F1[1],F1[2]);
+ 
+ sprintf(what,"[%s] %s \n",name);
  history_add(&ner->N,"bin/bann.log",name,what);
 
  if(f)
-  fclose(f);
+  {
+   int i;
+   fprintf(f,"\n[ERRORS]\n");
+   qsort(errorlist->entry,errorlist->c,sizeof(errorlist->entry[0]),dictentry_compare);
+   for(i=0;i<errorlist->c;i++)
+    fprintf(f,"%s\t%d\n",errorlist->entry[i].key,errorlist->entry[i].cnt);
+   dict_free(errorlist);
+   fclose(f);
+  }
 }
 
 // ----------------------------------
@@ -821,52 +851,63 @@ void shuffle(int*idx,int size)
 int main(int argc,const char*argv[])
 {
  NERtagger NER;
- corpus    train,testA,testB; 
- int       e,inw[256],o[2],*index;   
+ corpus    train,dev,test; 
+ int       e,inw[256],o[8],*index;   
  real      lasterr=100;
  bann_idx  a,b;
  bann_io   in,out;
+ int       start[4];
 
+ // read TRAIN corpus
  corpus_new(&train);
  if(corpus_read(&train,"bin/data/ner/eng.train"))
   {
-   // ---- dict_emit("NER",train.nerdict);
-   // ---- dict_emit("POS",train.posdict);
-   NERtagger_new(&NER,train.dict,train.posdict,train.nerdict);
+   // create BANN with this data
+   NERtagger_new(&NER,train.dict,&train.tagdict[0]);
    corpus_remap(&train,NER.cdict,NULL);
   }
  
- corpus_new(&testA);
- if(corpus_read(&testA,"bin/data/ner/eng.testa"))
+ // read DEV corpus
+ corpus_new(&dev);
+ if(corpus_read(&dev,"bin/data/ner/eng.dev"))
   {
-   corpus_remap(&testA,NER.cdict,&train);
+   corpus_remap(&dev,NER.cdict,&train);
   }
 
- corpus_new(&testB);
- if(corpus_read(&testB,"bin/data/ner/eng.testb"))
+ // read TEST corpus
+ corpus_new(&test);
+ if(corpus_read(&test,"bin/data/ner/eng.test"))
   {
-   corpus_remap(&testB,NER.cdict,&train);
+   corpus_remap(&test,NER.cdict,&train);
   }
-     
+ 
+ // set INPUT&OUTPUT bann_io
  in.kind=idx;in.idx=&a;
  a.hotpos=&inw[0];
 
  out.kind=idx;out.idx=&b;
  b.hotpos=&o[0];
 
+ // create index array (for shuffle)
  index=(int*)malloc(train.cl.c*sizeof(int));
  for(e=0;e<train.cl.c;e++)
   index[e]=e;
 
+ start[0]=0;
+ start[1]=start[0]+NER.poscnt;
+ start[2]=start[1]+NER.chunkcnt;
+ start[3]=start[2]+NER.nercnt; 
+
+ // train BANN
  for(e=0;e<MAX_EPOCHS;e++)
   {
    real err=0;
-   int  cnt=0,cl,w,goodN[256],addN[256],missN[256],hmNER=NER.N.weights[NER.N.weightscount-1].outs;
-   real acc,prec,recall,F1,F1pos;
+   int  cnt=0,cl,w,goodN[256],addN[256],missN[256],hmOUT=NER.N.weights[NER.N.weightscount-1].outs,good=0,bad=0;
+   real F1[3];
 
-   memset(goodN,0,hmNER*sizeof(goodN[0]));
-   memset(missN,0,hmNER*sizeof(missN[0]));
-   memset(addN,0,hmNER*sizeof(addN[0]));
+   memset(goodN,0,hmOUT*sizeof(goodN[0]));
+   memset(missN,0,hmOUT*sizeof(missN[0]));
+   memset(addN,0,hmOUT*sizeof(addN[0]));
 
    shuffle(index,train.cl.c);
    for(cl=0;cl<train.cl.c;cl++)
@@ -880,58 +921,58 @@ int main(int argc,const char*argv[])
        corpus_setinputlayer(&NER,&train,shuffledcl,w,&in);               
        if(in.idx->hotcnt)
         {
-         int        selPOS,correctPOS=train.wrd.b[w].pos;
-         int        selNER,correctNER=train.wrd.b[w].ner;
+         int        g,ii,sel[3],correct[3];
          const char*fit=train.dict->entry[train.wrd.b[w].fit].key;
-         const char*szpos=train.posdict->entry[correctPOS].key;
-         const char*szner=train.nerdict->entry[correctNER].key;
+         const char*spos=train.tagdict[0]->entry[train.wrd.b[w].tag[0]].key;
+         const char*schunk=train.tagdict[1]->entry[train.wrd.b[w].tag[1]].key;
+         const char*sner=train.tagdict[2]->entry[train.wrd.b[w].tag[2]].key;
+
+         for(ii=0;ii<3;ii++)
+          correct[ii]=train.wrd.b[w].tag[ii];
+                  
+         for(ii=0;ii<3;ii++)
+          out.idx->hotpos[ii]=start[ii]+train.wrd.b[w].tag[ii];
+         out.idx->hotcnt=ii;
          
-         out.idx->hotcnt=2;
-         out.idx->hotpos[0]=train.wrd.b[w].pos;
-         out.idx->hotpos[1]=NER.poscnt+train.wrd.b[w].ner;
-         //bann_predict(N,in);
          err+=bann_train(&NER.N,&in,&out);
 
-         bann_getPOSNER(&NER.N,NER.poscnt,&selPOS,&selNER);
+         bann_getPOSCHUNKNER(&NER.N,&start[0],&sel[0],3);
 
-         if(selNER==correctNER)
-          goodN[selNER]++;
-         else
-          {
-           addN[selNER]++;
-           missN[correctNER]++;
-          }       
+         for(g=ii=0;ii<3;ii++)
+          if(sel[ii]==correct[ii])
+           {goodN[start[ii]+sel[ii]]++;g++;}
+          else
+           {
+            addN[start[ii]+sel[ii]]++;
+            missN[start[ii]+correct[ii]]++;
+           }   
 
-         if(selPOS==correctPOS)
-          goodN[NER.nercnt+selPOS]++;
+         if(g==ii)
+          good++;
          else
-          {
-           addN[NER.nercnt+selPOS]++;
-           missN[NER.nercnt+correctPOS]++;
-          }       
-         
-         train.wrd.b[w].posT=selPOS;
-         train.wrd.b[w].nerT=selNER;
+          bad++;
+                  
+         for(ii=0;ii<3;ii++)
+          train.wrd.b[w].tagT[ii]=sel[ii];
 
          cnt++;
          if((cnt&0xFF)==0xFF)
          {
-          ner_qual(goodN,addN,missN,1,NER.nercnt,&acc,&prec,&recall,&F1);
-          ner_qual(goodN,addN,missN,NER.nercnt,NER.nercnt+NER.poscnt,NULL,NULL,NULL,&F1pos);
-          printf("[%s.%d] NER: F1: %.2f P: %.2f R: %.2f - POS: %.2f - MSE: %.2f  \r","eng.train",e+1,F1,prec,recall,F1pos,err/cnt);
+          ner_qual(goodN,addN,missN,start,F1,3);
+          printf("[%s.%d] Q: %.2f - POS: %.2f CHUNK: %.2f NER: %.2f - MSE: %.2f  \r","eng.train",e+1,(float)good*100/(float)(good+bad),F1[0],F1[1],F1[2],err/cnt);
          }
         }
       }
     }
-   ner_qual(goodN,addN,missN,1,NER.nercnt,&acc,&prec,&recall,&F1);
-   ner_qual(goodN,addN,missN,NER.nercnt,NER.nercnt+NER.poscnt,NULL,NULL,NULL,&F1pos);
-   printf("[%s.%d] NER: F1: %.2f P: %.2f R: %.2f - POS: %.2f - MSE: %.2f  \n","eng.train",e+1,F1,prec,recall,F1pos,err/cnt);
+   ner_qual(goodN,addN,missN,start,F1,3);
+   printf("[%s.%d] Q: %.2f - POS: %.2f CHUNK: %.2f NER: %.2f - MSE: %.2f  \n","eng.train",e+1,(float)good*100/(float)(good+bad),F1[0],F1[1],F1[2],err/cnt);
    err/=cnt;
 
+   // when ready, check quality (and save)
    if((err<0.05f)||(e+1==MAX_EPOCHS))
     {
-     corpus_predict(&NER,&in,&testA,"eng.testa","bin/eng.testa.log");
-     corpus_predict(&NER,&in,&testB,"eng.testb","bin/eng.testb.log");    
+     corpus_predict(&NER,&in,&dev,"eng.dev","bin/eng.dev.log");
+     corpus_predict(&NER,&in,&test,"eng.test","bin/eng.test.log");    
      if(err<lasterr)
      {
       bann_write(&NER.N,"bin/ner.bann",0);
@@ -939,10 +980,12 @@ int main(int argc,const char*argv[])
       lasterr=err;
       if(err<MSE_STOP)
        break;
-     }
+     }     
+    }
+   // change optimization when lower than 0.05f
+   if(err<0.05f)
      if(NER.N.opt.optimize==bann_optimizer_decay)
       NER.N.opt.optimize=bann_optimizer_adaptive;
-    }
   }
 
  NERtagger_delete(&NER);
@@ -950,8 +993,8 @@ int main(int argc,const char*argv[])
  free(index);
 
  corpus_delete(&train);
- corpus_delete(&testA);
- corpus_delete(&testB);
+ corpus_delete(&dev);
+ corpus_delete(&test);
 
  return 1;
 }

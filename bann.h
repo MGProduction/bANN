@@ -179,7 +179,7 @@ real nn_getoutput(bann*net,int l,int c)
 }
 real nn_getdelta(bann*net,int l,int r)
 {
- if((l<0)||(l>=net->weightscount)||(r<0)||(r>=net->weights[l].ins))
+ if((l<0)||(l>=net->weightscount)||(r<0)||(r>=net->weights[l].outs))
   return invalid();
  else
   return net->weights[l].d[r];
@@ -193,7 +193,7 @@ void nn_setoutput(bann*net,int l,int c,real v)
 }
 void nn_setdelta(bann*net,int l,int r,real v)
 {
- if((l<0)||(l>=net->weightscount)||(r<0)||(r>=net->weights[l].ins))
+ if((l<0)||(l>=net->weightscount)||(r<0)||(r>=net->weights[l].outs))
   invalid();
  else
   net->weights[l].d[r]=v;
