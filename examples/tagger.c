@@ -1006,7 +1006,6 @@ int main(int argc,const char*argv[])
       break;
     }     
    // change optimization when lower than 0.05f
-   if(0)
    if(err<0.05f)
      if(NER.N.opt.optimize==bann_optimizer_decay)
       NER.N.opt.optimize=bann_optimizer_adaptive;
