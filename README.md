@@ -94,8 +94,8 @@ A more complex task, still done with a common dataset. Here to get a little more
 
 ### TAGGER (tagger.c) 
 
-This is NOT a standard test for ann but a toy project to see how **bann_io** works (and how anns can be used to get TWO - or more - return values).  This example uses **[https://www.clips.uantwerpen.be/conll2003/ner/](ConLLU 2003 English dataset)** to create a minimal **POS/NER tagger**. Code shows how a moving window of context is passed as input, and how two set of data (POS and NER) are retrieved as output.
+This is NOT a standard test for ann but a toy project to see how **bann_io** works (and how anns can be used to get THREE - or more - return values).  This example uses **[ConLLU 2003 English dataset](https://www.clips.uantwerpen.be/conll2003/ner/)** to create a minimal **POS/NER tagger**. Code shows how a moving window of context is passed as input, and how three set of data (POS, CHUNK and NER) are retrieved as output.
 
-Input is **125741** cell wide BUT, using bann_io structure, training (and usage) keeps the average speed not too slow even on a small PC. And saving ann in a quantized way makes also the memory usage relatively small.
+Input is **100k** cell wide BUT, using bann_io structure, training (and usage) keeps the average speed not too slow even on a small PC. And saving ann in a quantized way makes also the memory usage relatively small.
 
-Results - with such a simple implementation - are far from astonishing (92% for POS and 78% (F1) for NER) but here we don't use embeddings nor RNN (so everything should be faster and smaller) 
+Results - with such a simple implementation - are far from astonishing (**83%** of accuracy considering all the three fields together - **91%** POS, **93%** CHUNK and **94%** NER as **F1** considering each field in a separate way) but here we don't use embeddings nor RNN (so everything should be faster and smaller) 
