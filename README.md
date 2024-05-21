@@ -1,6 +1,6 @@
 # bANN
 
-**bANN** is just a header-only C library for playing with neural networks (using only the CPU). It's meant to be simple, small, relatively fast, and have few extra features compared to similar minimal libraries. I've made it because I need it for some small toy projects, and I've released it under the MIT licence because I've used, studied and loved other open source libraries and wanted to give something back.
+**bANN** is a header-only C library for playing with neural networks (using the CPU). It's meant to be simple, small, relatively fast, and have few extra features compared to similar minimal libraries. I've made it because I need it for some small **toy projects**, and I've released it under the MIT licence. I don't think YOU may need it (considering), but, well, who knows :-)
 
 This library is similar to / inspired by other great C libraries, [genann](https://github.com/codeplea/genann) and [tinn](https://github.com/glouw/tinn), certainly more readable, used and tested than mine. 
 
@@ -55,7 +55,7 @@ ONCE to compiler also its C code
 
 If you just want to use a bANN quantized file (generated with bANN) you can include just this 
 
-	#define BANN_IMPLEMENTATION
+	#define BANNQ_IMPLEMENTATION
 	#include "bannQ.h"
 	
 	// declare the network
