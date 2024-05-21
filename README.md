@@ -84,7 +84,7 @@ Minimal sample to get a XOR behaviour from a **2-2-1** ann. It also used to quan
 
 ### MNIST (fashion-mnist.c) 
 
-It's more or less the "standard" test for anns. Here a **784-48-10** ann reaches around **96.70%** accuracy with **8** epochs, and that's a matter of few minutes.
+It's more or less the "standard" test for anns. Here a **784-48-10** ann reaches around **96.48%** accuracy with **8** epochs, and that's a matter of few minutes.
 
 ### FASHIN-MNIST (fashion-mnist.c) 
 

@@ -115,9 +115,10 @@ void bann_delete(bann*net);
 
 void bann_setweightactivation(bann*net,int layernumber,int actmethod);
 
-#define bann_optimizer_off          0
-#define bann_optimizer_adaptive     1
-#define bann_optimizer_decay        2
+#define bann_optimizer_off            0
+#define bann_optimizer_adaptive       1
+#define bann_optimizer_adaptivesteady 2
+#define bann_optimizer_decay          3
 
 void bann_setlearningrate(bann*net,real learningrate,int optimizemode,int speed);
 
@@ -491,6 +492,7 @@ void bann_optimize(bann*net,real err)
 {
  switch(net->opt.optimize)
  {
+ case bann_optimizer_adaptivesteady:
  case bann_optimizer_adaptive:
   {
    int  l=net->weightscount-1;
@@ -502,7 +504,11 @@ void bann_optimize(bann*net,real err)
 
      net->opt.errsum/=net->opt.errcnt;
      
-     if(net->opt.errsum<0.5f) errlow=1;
+     if(net->opt.errsum<0.5f) 
+      if(net->opt.optimize==bann_optimizer_adaptivesteady)
+       ;
+      else
+       errlow=1;
      if(errlow) 
       if(net->opt.speed>256) 
        net->opt.speed--;

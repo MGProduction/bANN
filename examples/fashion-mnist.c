@@ -9,7 +9,7 @@
 #include "bann.h"
 
 // 
-//#define FASHION_TEST
+#define FASHION_TEST
 // 
 
 #if defined(FASHION_TEST)

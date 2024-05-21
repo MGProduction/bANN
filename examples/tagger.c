@@ -728,7 +728,7 @@ int dictentry_compare(const void*a,const void*b)
  return B->cnt-A->cnt;
 }
 
-void corpus_predict(NERtagger*ner,bann_io*in,corpus*wrdA,const char*name,const char*outname)
+real corpus_predict(NERtagger*ner,bann_io*in,corpus*wrdA,const char*name,const char*outname)
 {
  bann*N=&ner->N;
  real F1[3];
@@ -819,8 +819,11 @@ void corpus_predict(NERtagger*ner,bann_io*in,corpus*wrdA,const char*name,const c
  ner_qual(goodN,addN,missN,start,F1,3);
  sprintf(what,"[%s] Q: %.2f - POS: %.2f CHUNK: %.2f NER: %.2f",name,(float)good*100/(float)(good+bad),F1[0],F1[1],F1[2]);
  
- printf("%s \n",what);
- history_add(&ner->N,"bin/bann.log",name,what);
+ if(f)
+  {
+   printf("%s \n",what);
+   history_add(&ner->N,"bin/bann.log",name,what);
+  }
 
  if(f)
   {
@@ -849,6 +852,7 @@ void corpus_predict(NERtagger*ner,bann_io*in,corpus*wrdA,const char*name,const c
     }
    fclose(f);
   }
+ return (float)good*100/(float)(good+bad);
 }
 
 // ----------------------------------
@@ -877,7 +881,7 @@ int main(int argc,const char*argv[])
  NERtagger NER;
  corpus    train,dev,test; 
  int       e,inw[256],o[8],*index;   
- real      lasterr=100;
+ real      lasterr=100,prevdevqual=0;
  bann_idx  a,b;
  bann_io   in,out;
  int       start[4];
@@ -994,9 +998,23 @@ int main(int argc,const char*argv[])
 
    // when ready, check quality (and save)
    if((err<0.05f)||(e+1==MAX_EPOCHS))
-    corpus_predict(&NER,&in,&dev,"eng.dev","bin/eng.dev.log");
+    {
+     real devqual;
+     if(e+1==MAX_EPOCHS)
+      devqual=corpus_predict(&NER,&in,&dev,"eng.dev","bin/eng.dev.log");
+     else
+      devqual=corpus_predict(&NER,&in,&dev,"eng.dev",NULL);
+     if(devqual<prevdevqual)
+      NER.N.opt.optimize=bann_optimizer_decay;
+     else
+      NER.N.opt.optimize=bann_optimizer_off;
+     prevdevqual=devqual;
+    }
    if((err<0.02f)||(e+1==MAX_EPOCHS))
-    corpus_predict(&NER,&in,&test,"eng.test","bin/eng.test.log");         
+    if(e+1==MAX_EPOCHS)
+     corpus_predict(&NER,&in,&test,"eng.test","bin/eng.test.log");         
+    else
+     corpus_predict(&NER,&in,&test,"eng.test",NULL);         
    if(err<lasterr)
     {
      bann_write(&NER.N,"bin/ner.bann",0);
@@ -1006,9 +1024,9 @@ int main(int argc,const char*argv[])
       break;
     }     
    // change optimization when lower than 0.05f
-   if(err<0.05f)
+   /*if(err<0.05f)
      if(NER.N.opt.optimize==bann_optimizer_decay)
-      NER.N.opt.optimize=bann_optimizer_adaptive;
+      NER.N.opt.optimize=bann_optimizer_adaptive;*/
   }
 
  NERtagger_delete(&NER);
