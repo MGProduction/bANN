@@ -35,6 +35,7 @@ extern "C" {
 // ---------------------------------------------------------------------
 
 typedef float         real;
+//typedef double        real;
 typedef unsigned char byte;
 
 #if !defined(BANN_IO_DEFINED)
@@ -93,6 +94,8 @@ typedef struct{
  weight*weights;
 #if defined(BANN_RNN)
  weight*rweights;
+ weight*_weights;
+ weight*_rweights;
 #endif
  int    weightscount;
  int    linearsize;
@@ -115,17 +118,24 @@ void bann_delete(bann*net);
 
 void bann_setweightactivation(bann*net,int layernumber,int actmethod);
 
-#define bann_optimizer_off            0
-#define bann_optimizer_adaptive       1
-#define bann_optimizer_adaptivesteady 2
-#define bann_optimizer_decay          3
+#define bann_optimizer_off              0
+#define bann_optimizer_adaptive        10
+#define bann_optimizer_adaptivesteady  11
+#define bann_optimizer_adaptiveslow    12
+#define bann_optimizer_decay           20
 
 void bann_setlearningrate(bann*net,real learningrate,int optimizemode,int speed);
 
 real*bann_predict(bann*net,const bann_io*input);
+real bann_backward(bann*net,const bann_io*input,const bann_io*output);
 real bann_train(bann*net,const bann_io*input,const bann_io*output);
+void bann_optimize(bann*net,real err);
 #if defined(BANN_RNN)
+real bann_backwardrnn(bann*net,const bann_io*input,const bann_io*output);
 void bann_startrnn(bann*net);
+void bann_allocrnntraining(bann*net);
+void bann_freernntraining(bann*net);
+void bann_updatenntraining(bann*net,real err,int seqlen);
 #endif
 
 int  bann_write(bann*net,const char*file,int way);
@@ -148,13 +158,16 @@ int  bann_read(bann*net,const char*file);
 int sanitycheck(real v)
 {
  if(_isnan(v))
-  return 0;
+  {
+   printf("nan!\n");
+   return 0;
+  }
  else
   return 1;
 }
 real invalid()
 {
- printf("error!\n");
+ printf("out of range!\n");
  return 0;
 }
 real nn_getweight(bann*net,int l,int r,int c)
@@ -227,7 +240,18 @@ real bann_sigmoid_direct(real a)
 }
 real bann_softmax(real a)
 {
- return expf(a);
+ real ret;
+ if(a>15)
+  a=15;
+ else
+ if(a<-15)
+  a=-15;
+ ret=expf(a);
+ return ret;
+}
+real bann_softmax_prime(real a)
+{
+ return a;
 }
 real bann_tanh(real a)
 {
@@ -235,7 +259,6 @@ real bann_tanh(real a)
 }
 real bann_tanh_prime(real a)
 {
- //real aa=bann_tanh(a);
  return 1-a*a;
 }
 real bann_linear(real f)
@@ -320,7 +343,7 @@ void bann_enableweightactivation(bann*net,int layernumber)
    break;
    case bann_activation_softmax: 
     net->weights[layernumber].activation=bann_softmax;
-    net->weights[layernumber].prime=bann_tanh_prime;
+    net->weights[layernumber].prime=bann_softmax_prime;
     break;
   }
 }
@@ -366,7 +389,70 @@ real*bann_setweighttemp(bann*net,int layernumber,real*ptr)
 #if defined(BANN_RNN)
 void bann_startrnn(bann*net)
 {
+ int i;
  memset(net->weights[net->weightscount].o,0,net->weights[net->weightscount].outs*sizeof(net->weights[net->weightscount].o[0]));
+ if(net->_weights)
+  {
+   for(i=0;i<=net->weightscount;i++)
+    {
+     memset(net->_weights[i].w,0,net->weights[i].ins*net->weights[i].outs*sizeof(net->_weights[i].w[0]));
+     memset(net->_weights[i].bias,0,net->weights[i].outs*sizeof(net->_weights[i].bias[0]));
+    }
+   memset(net->_rweights[0].o,0,net->weights[net->weightscount-1].outs*sizeof(net->_rweights[0].o[0]));
+  }
+}
+void bann_allocrnntraining(bann*net)
+{
+ int i;
+ net->_weights=(weight*)malloc((net->weightscount+1)*sizeof(weight));
+ memset(net->_weights,0,(net->weightscount+1)*sizeof(weight));
+ for(i=0;i<=net->weightscount;i++)
+  {
+   net->_weights[i].w=(real*)malloc(net->weights[i].ins*net->weights[i].outs*sizeof(net->_weights[i].w[0]));
+   net->_weights[i].bias=(real*)malloc(net->weights[i].outs*sizeof(net->_weights[i].bias[0]));   
+  } 
+ net->_rweights=&net->_weights[net->weightscount]; 
+ net->_rweights[0].o=(real*)malloc(net->weights[net->weightscount-1].outs*sizeof(net->_weights[i].o[0]));
+}
+void bann_updatenntraining(bann*net,real err,int seqlen)
+{
+ int l;
+ for(l=0;l<=net->weightscount;l++)
+  {
+   int c,r;
+   for(c=0;c<net->weights[l].outs;c++)
+    {
+     net->weights[l].bias[c]+=(net->_weights[l].bias[c]/seqlen)*net->opt.learningrate;
+     if(net->weights[l].bias[c]<-1)
+      net->weights[l].bias[c]=-1;
+     else
+      if(net->weights[l].bias[c]>1)
+      net->weights[l].bias[c]=1;
+     for(r=0;r<net->weights[l].ins;r++)
+     {
+      net->weights[l].w[c*net->weights[l].ins+r]+=(net->_weights[l].w[c*net->weights[l].ins+r]/seqlen)*net->opt.learningrate;     
+      if(net->weights[l].w[c*net->weights[l].ins+r]<-1)
+       net->weights[l].w[c*net->weights[l].ins+r]=-1;
+      else
+      if(net->weights[l].w[c*net->weights[l].ins+r]>1)
+       net->weights[l].w[c*net->weights[l].ins+r]=1;
+     }
+    }
+  }
+ if(net->opt.optimize)
+  bann_optimize(net,err/seqlen);
+}
+void bann_freernntraining(bann*net)
+{
+ int i;
+ for(i=0;i<=net->weightscount;i++)
+  {
+   free(net->_weights[i].w);
+   free(net->_weights[i].bias);
+   if(net->_weights[i].o) free(net->_weights[i].o);
+  }
+ free(net->_weights);
+ net->_weights=NULL;
 }
 #endif
 
@@ -463,7 +549,9 @@ real*bann_predict(bann*net,const bann_io*input)
        for(j=0;j<net->weights[l].ins;j++)
         sum+=net->weights[l-1].o[j]*nn_getweight(net,l,j,i);
       }
+     sanitycheck(sum);
      nn_setoutput(net,l,i,net->weights[l].activation(sum));     
+     sanitycheck(net->weights[l].o[i]);
     }
    if((net->weights[l].flags&7)==bann_activation_softmax)
     {
@@ -504,6 +592,7 @@ void bann_optimize(bann*net,real err)
  switch(net->opt.optimize)
  {
  case bann_optimizer_adaptivesteady:
+ case bann_optimizer_adaptiveslow:
  case bann_optimizer_adaptive:
   {
    int  l=net->weightscount-1;
@@ -511,7 +600,11 @@ void bann_optimize(bann*net,real err)
    if(net->opt.errcnt>net->opt.speed)
     {
      real expand=1.0f,lowcut=0.25f;
+     real minv=0.25f,maxv=1.75f;
      int  errlow=0;
+
+     if(net->opt.optimize==bann_optimizer_adaptiveslow)
+      {minv=0.95f;maxv=1.05f;}
 
      net->opt.errsum/=net->opt.errcnt;
      
@@ -536,16 +629,16 @@ void bann_optimize(bann*net,real err)
      net->opt.preverrsum=net->opt.errsum;
      net->opt.errsum=0;net->opt.errcnt=0;
 
-     if(expand<0.25f) 
+     if(expand<minv) 
       {
-       expand=0.25f;
+       expand=minv;
        if(errlow) 
          net->opt.speed+=128;
       }
      else
-      if(expand>1.75f)
+      if(expand>maxv)
       {
-       expand=1.75f;
+       expand=maxv;
        if(errlow) 
         net->opt.speed+=128;
       }
@@ -573,18 +666,22 @@ void bann_optimize(bann*net,real err)
 }
 
 #define BIAS_LIMIT 4
-//#define bann_protectbias(a) {if(a<-BIAS_LIMIT) a=-BIAS_LIMIT; else if(a>BIAS_LIMIT) a=BIAS_LIMIT;}
+#if defined(BANN_RNN)
+#define bann_protectbias(a) {if(a<-BIAS_LIMIT) a=-BIAS_LIMIT; else if(a>BIAS_LIMIT) a=BIAS_LIMIT;}
+#else
 #define bann_protectbias(a) 
-//#define bann_protect(a)     {if(a<-15) a=-15; else if(a>15) a=15;}
+#endif
+#if defined(BANN_RNN)
+#define bann_protect(a)     {if(a<-BIAS_LIMIT) a=-BIAS_LIMIT; else if(a>BIAS_LIMIT) a=BIAS_LIMIT;}
+#else
 #define bann_protect(a)     
+#endif
 
 // bann training
-real bann_train(bann*net,const bann_io*input,const bann_io*output)
+real bann_backward(bann*net,const bann_io*input,const bann_io*output)
 {
  int  c,r,l=net->weightscount-1,h=0;
- real learningrate=net->opt.learningrate,err=0,bdelta=0;
- // forward
- bann_predict(net,input);
+ real learningrate=net->opt.learningrate,err=0,bdelta=0; 
  // calc error deltas
  for(c=0;c<net->weights[l].outs;c++)
   {
@@ -611,6 +708,7 @@ real bann_train(bann*net,const bann_io*input,const bann_io*output)
     }  
    error=(val-net->weights[l].o[c]);
    derror=error * net->weights[l].prime(net->weights[l].o[c]);
+   sanitycheck(derror);
    nn_setdelta(net,l,c,derror);
    err+=0.5f*error*error;   
   }
@@ -621,6 +719,7 @@ real bann_train(bann*net,const bann_io*input,const bann_io*output)
     for(c=0;c<net->weights[l].outs;c++)
      delta += nn_getdelta(net,l,c) * nn_getweight(net,l,r,c);
     delta*=net->weights[l].prime(nn_getoutput(net,l-1,r));
+    sanitycheck(delta);
     nn_setdelta(net,l-1,r,delta);
    }
  // backpropagation
@@ -630,6 +729,7 @@ real bann_train(bann*net,const bann_io*input,const bann_io*output)
     {
      real delta=net->weights[l].d[c];
      net->weights[l].bias[c]-=delta*learningrate;
+     sanitycheck(net->weights[l].bias[c]);
      bann_protectbias(net->weights[l].bias[c]);
      if(l==0)
      {
@@ -639,6 +739,7 @@ real bann_train(bann*net,const bann_io*input,const bann_io*output)
          for(r=0;r<net->weights[l].ins;r++)
           {
            net->weights[l].w[c*net->weights[l].ins+r]+=delta*learningrate*input->linear[r];
+           sanitycheck(net->weights[l].w[c*net->weights[l].ins+r]);
            bann_protect(net->weights[l].w[c*net->weights[l].ins+r]);
           }
          break;
@@ -647,6 +748,7 @@ real bann_train(bann*net,const bann_io*input,const bann_io*output)
           {      
            int rr=input->idx->hotpos[r];
            net->weights[l].w[c*net->weights[l].ins+rr]+=delta*learningrate;
+           sanitycheck(net->weights[l].w[c*net->weights[l].ins+rr]);
            bann_protect(net->weights[l].w[c*net->weights[l].ins+rr]);
           }
          break;
@@ -655,6 +757,7 @@ real bann_train(bann*net,const bann_io*input,const bann_io*output)
           {      
            int rr=input->fidx->hotpos[r];
            net->weights[l].w[c*net->weights[l].ins+rr]+=delta*learningrate*input->fidx->hotval[r];
+           sanitycheck(net->weights[l].w[c*net->weights[l].ins+rr]);
            bann_protect(net->weights[l].w[c*net->weights[l].ins+rr]);
           }
          break;
@@ -663,7 +766,8 @@ real bann_train(bann*net,const bann_io*input,const bann_io*output)
       for(r=0;r<net->rweights[0].ins;r++)
        {
         net->rweights[0].w[c*net->rweights[0].ins+r]+=delta*learningrate*net->rweights[0].d[r];
-        bann_protect(net->rweights[0].w[c*net->weights[0].ins+r]);
+        sanitycheck(net->rweights[0].w[c*net->rweights[0].ins+r]);
+        bann_protect(net->rweights[0].w[c*net->rweights[0].ins+r]);
        }
 #endif
      }
@@ -672,6 +776,7 @@ real bann_train(bann*net,const bann_io*input,const bann_io*output)
        for(r=0;r<net->weights[l].ins;r++)
        {
         net->weights[l].w[c*net->weights[l].ins+r]+=delta*learningrate*net->weights[l-1].o[r];
+        sanitycheck(net->weights[l].w[c*net->weights[l].ins+r]);
         bann_protect(net->weights[l].w[c*net->weights[l].ins+r]);
        }
       }
@@ -681,7 +786,124 @@ real bann_train(bann*net,const bann_io*input,const bann_io*output)
   bann_optimize(net,err);
  return err;
 }
-
+real bann_backwardrnn(bann*net,const bann_io*input,const bann_io*output)
+{
+ int  c,r,l=net->weightscount-1,h=0;
+ real learningrate=1.0f,err=0,bdelta=0; 
+ // calc error deltas
+ for(c=0;c<net->weights[l].outs;c++)
+  {
+   real error,derror,val=0;
+   switch(output->kind)
+    {
+     case standard:
+      val=output->linear[c];
+     break;
+     case idx:
+      if((h<output->idx->hotcnt)&&(c==output->idx->hotpos[h]))
+       {
+        val=1;
+        h++;
+       }
+      break;
+     case fidx:
+      if((h<output->fidx->hotcnt)&&(c==output->fidx->hotpos[h]))
+       {
+        val=output->fidx->hotval[h];
+        h++;
+       }
+      break;
+    }  
+   error=(net->weights[l].o[c]-val);
+   derror=error * net->weights[l].prime(net->weights[l].o[c]);
+   sanitycheck(derror);
+   nn_setdelta(net,l,c,derror+net->_rweights[0].o[c]);
+   err+=0.5f*error*error;   
+  }
+ for(;l>0;l--)
+  for(r=0;r<net->weights[l].ins;r++)
+   {
+    real delta=0;
+    for(c=0;c<net->weights[l].outs;c++)
+     delta += nn_getdelta(net,l,c) * nn_getweight(net,l,r,c);
+    delta*=net->weights[l].prime(nn_getoutput(net,l-1,r));
+    sanitycheck(delta);
+    nn_setdelta(net,l-1,r,delta);
+   }
+ // backpropagation
+ for(l=0;l<net->weightscount;l++)
+  {
+   for(c=0;c<net->weights[l].outs;c++)
+    {
+     real delta=net->weights[l].d[c];
+     net->_weights[l].bias[c]-=delta*learningrate;
+     sanitycheck(net->_weights[l].bias[c]);
+     bann_protectbias(net->_weights[l].bias[c]);
+     if(l==0)
+     {
+      switch(input->kind)
+       {
+        case standard:
+         for(r=0;r<net->weights[l].ins;r++)
+          {
+           net->_weights[l].w[c*net->weights[l].ins+r]+=delta*learningrate*input->linear[r];
+           sanitycheck(net->_weights[l].w[c*net->weights[l].ins+r]);
+           bann_protect(net->_weights[l].w[c*net->weights[l].ins+r]);
+          }
+         break;
+        case idx:
+         for(r=0;r<input->idx->hotcnt;r++)
+          {      
+           int rr=input->idx->hotpos[r];
+           net->_weights[l].w[c*net->weights[l].ins+rr]+=delta*learningrate;
+           sanitycheck(net->_weights[l].w[c*net->weights[l].ins+rr]);
+           bann_protect(net->_weights[l].w[c*net->weights[l].ins+rr]);
+          }
+         break;
+        case fidx:
+         for(r=0;r<input->fidx->hotcnt;r++)
+          {      
+           int rr=input->fidx->hotpos[r];
+           net->_weights[l].w[c*net->weights[l].ins+rr]+=delta*learningrate*input->fidx->hotval[r];
+           sanitycheck(net->_weights[l].w[c*net->weights[l].ins+rr]);
+           bann_protect(net->_weights[l].w[c*net->weights[l].ins+rr]);
+          }
+         break;
+       }
+#if defined(BANN_RNN)
+      {
+       real sum=0;
+       for(r=0;r<net->rweights[0].ins;r++)
+        {
+         net->_rweights[0].w[c*net->rweights[0].ins+r]+=delta*learningrate*net->rweights[0].d[r];
+         sanitycheck(net->_rweights[0].w[c*net->rweights[0].ins+r]);
+         bann_protect(net->_rweights[0].w[c*net->rweights[0].ins+r]);
+         sum+=net->_rweights[0].w[c*net->rweights[0].ins+r]*delta;
+        }
+       net->_rweights[0].o[c]=sum;
+      }
+#endif
+     }
+     else
+      {
+       for(r=0;r<net->weights[l].ins;r++)
+       {
+        net->_weights[l].w[c*net->weights[l].ins+r]+=delta*learningrate*net->weights[l-1].o[r];
+        sanitycheck(net->_weights[l].w[c*net->weights[l].ins+r]);
+        bann_protect(net->_weights[l].w[c*net->weights[l].ins+r]);
+       }
+      }
+    }
+  }
+ return err;
+}
+real bann_train(bann*net,const bann_io*input,const bann_io*output)
+{
+ // forward
+ bann_predict(net,input);
+ // backward
+ return bann_backward(net,input,output);
+}
 // nnet delete
 void bann_delete(bann*net)
 {

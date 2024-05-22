@@ -4,6 +4,7 @@
 
 #define BANN_IMPLEMENTATION
 #define BANN_DEBUG
+//#define BANN_RNN
 #include "bann.h"
 
 // ----------------------------------
@@ -13,7 +14,11 @@
 #define WINDOW_SIZE         5
 #define HIDDEN_LAYER       64
 #define HIDDEN_LAYER_COUNT  1
+#if defined(BANN_RNN)
+#define MAX_EPOCHS         64
+#else
 #define MAX_EPOCHS         32
+#endif
 #define MSE_STOP       0.001f
 
 #define MAX_ENDLENGTH       3
@@ -139,31 +144,37 @@ int cpos_normalize(const char*wrd,char*morph)
 int cpos_safemorph(const char*wrd,char*morph)
 {
  int  i=0,m=0,j,mask=0;
- char codes[]="0Aa_^+";
+ char codes[]="0Aa_^+",ch=0;
  while(wrd[i])
   {
    int a,c=char_get(wrd+i,&a);
    if(char_isdigit(wrd+i,NULL))
-    mask|=1;
+    {mask|=1;if(ch==0) ch='0';}
    else
    if(char_isupper(wrd+i,NULL))
-    mask|=2;
+    {mask|=2;if(ch==0) ch='A';}
    else
     if(char_islower(wrd+i,NULL))
-     mask|=4;
+     {mask|=4;if(ch==0) ch='a';}
     else
      if(char_ispunct(wrd+i,NULL))
       if(str_charinset(wrd+i,".,:;+-=?!()[]/\\&%$£\"'@"))
-       mask|=32;
+       {mask|=32;if(ch==0) ch=c;}
       else
-       mask|=16;
+       {mask|=16;if(ch==0) ch=c;}
      else
-      mask|=8;
+      {mask|=8;if(ch==0) ch=c;}
    i+=a;
   }
- for(i=0,j=1;codes[i];i++,j*=2)
-  if(mask&j)
-   morph[m++]=codes[i];
+ if(mask)
+  {
+   morph[m++]='$';
+   if(ch)
+    morph[m++]=ch;
+   for(i=0,j=1;codes[i];i++,j*=2)
+    if(mask&j)
+     morph[m++]=codes[i];
+  }
  morph[m]=0;
  return m;
 }
@@ -403,19 +414,37 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t*tagdict)
      byte ch=(byte)wrd[len++];
      ner->usedchars[ch]=1;
     }
-   if(((dict->entry[e].cnt>avg2)&&char_isalpha(wrd,NULL))||n)
+   if(((dict->entry[e].cnt>avg2)/*&&char_isalpha(wrd,NULL)*/)||n)
     dict_add(ner->cdict,wrd,dict->entry[e].cnt);
 
    if(n==0)
     if(dict->entry[e].cnt<ttop)
      {
       char tmp[256];
-      int  end,id=-1;
-      for(end=MAX_ENDLENGTH;end>=-1;end--)
-       if(cpos_morph(wrd,tmp,end))
-        dict_add(tdict,tmp,1);
-      if(cpos_safemorph(wrd,tmp))
-       dict_add(tdict,tmp,1);
+      if(1)
+       {
+        if(cpos_morph(dict->entry[e].key,tmp,3))
+         dict_add(tdict,tmp,1);
+        if(cpos_morph(dict->entry[e].key,tmp,2))
+         dict_add(tdict,tmp,1);
+        if(cpos_morph(dict->entry[e].key,tmp,1))
+         dict_add(tdict,tmp,1);
+        if(cpos_morph(dict->entry[e].key,tmp,0))
+         dict_add(tdict,tmp,1);
+        if(cpos_morph(dict->entry[e].key,tmp,-1))
+         dict_add(tdict,tmp,1);
+        if(cpos_safemorph(wrd,tmp))
+         dict_add(tdict,tmp,1);
+       }
+      else
+       {
+        int  end,id=-1;
+        for(end=MAX_ENDLENGTH;end>=-1;end--)
+         if(cpos_morph(wrd,tmp,end))
+          dict_add(tdict,tmp,1);
+        if(cpos_safemorph(wrd,tmp))
+         dict_add(tdict,tmp,1);
+       }
      }
   }
 
@@ -430,9 +459,8 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t*tagdict)
 
  qsort(tdict->entry,tdict->c,sizeof(tdict->entry[0]),dictentry_compare);
 
- if(0)
-  if(tdict->c>2*1024)
-   avg=tdict->entry[2048].cnt;
+ if(tdict->c>1*1024)
+  avg=tdict->entry[1*1024].cnt;
 
  for(e=0;e<tdict->c;e++) 
   if(tdict->entry[e].cnt>avg)
@@ -463,7 +491,11 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t*tagdict)
  ner->corpusseq=((ner->cdict->c+1)+ner->poscnt+ner->chunkcnt+ner->nercnt+3)*(ner->window_size*2+1);
 
  bann_new(&ner->N,ner->corpusseq,HIDDEN_LAYER,HIDDEN_LAYER_COUNT,ner->poscnt+ner->chunkcnt+ner->nercnt);
+#if defined(BANN_RNN)
+ bann_setlearningrate(&ner->N,0.5f,bann_optimizer_adaptiveslow,96*1024);
+#else
  bann_setlearningrate(&ner->N,1.0f,bann_optimizer_decay,96*1024);
+#endif
 
  if(HIDDEN_LAYER_COUNT>1)
   printf("creating bANN with %d x %d (%d) x %d cells\n",ner->corpusseq,HIDDEN_LAYER,HIDDEN_LAYER_COUNT,ner->poscnt+ner->chunkcnt+ner->nercnt); 
@@ -631,16 +663,41 @@ void corpus_remap(corpus*crp,dict_t cdict,corpus*remap)
      {
       char tmp[256];
       int  end=5,id=-1;
-      for(end=MAX_ENDLENGTH;end>=-1;end--)
-       if(cpos_morph(fit,tmp,end)&&((id=dict_find(cdict,tmp))!=-1))
-        break;
-      if(id!=-1)
-       crp->wrd.b[e].fitR=id;
+      if(1)
+       {
+        if(cpos_morph(fit,tmp,3)&&((id=dict_find(cdict,tmp))!=-1))
+         crp->wrd.b[e].fitR=id;
+        else
+        if(cpos_morph(fit,tmp,2)&&((id=dict_find(cdict,tmp))!=-1))
+         crp->wrd.b[e].fitR=id;
+        else
+        if(cpos_morph(fit,tmp,1)&&((id=dict_find(cdict,tmp))!=-1))
+         crp->wrd.b[e].fitR=id;
+        else
+        if(cpos_morph(fit,tmp,0)&&((id=dict_find(cdict,tmp))!=-1))
+         crp->wrd.b[e].fitR=id;
+        else
+        if(cpos_morph(fit,tmp,-1)&&((id=dict_find(cdict,tmp))!=-1))
+         crp->wrd.b[e].fitR=id;
+        else
+        if(cpos_safemorph(fit,tmp)&&((id=dict_find(cdict,tmp))!=-1))
+         crp->wrd.b[e].fitR=id;
+        else
+         crp->wrd.b[e].fitR=-1;
+       }
       else
-       if(cpos_safemorph(fit,tmp)&&((id=dict_find(cdict,tmp))!=-1))
+       {
+       for(end=MAX_ENDLENGTH;end>=-1;end--)
+        if(cpos_morph(fit,tmp,end)&&((id=dict_find(cdict,tmp))!=-1))
+         break;
+       if(id!=-1)
         crp->wrd.b[e].fitR=id;
        else
-        crp->wrd.b[e].fitR=-1;
+        if(cpos_safemorph(fit,tmp)&&((id=dict_find(cdict,tmp))!=-1))
+         crp->wrd.b[e].fitR=id;
+        else
+         crp->wrd.b[e].fitR=-1;
+       }
      }
    }
   else
@@ -766,7 +823,7 @@ void ner_qual(int*good,int*add,int*miss,int*start,real*F1,int rcnt)
   }
 }
 
-real corpus_predict(NERtagger*ner,bann_io*in,corpus*wrdA,const char*name,const char*outname)
+real corpus_predict(NERtagger*ner,bann_io*in,corpus*wrdA,const char*name,int trainingepochs,const char*outname)
 {
  bann*N=&ner->N;
  real F1[3];
@@ -795,6 +852,9 @@ real corpus_predict(NERtagger*ner,bann_io*in,corpus*wrdA,const char*name,const c
  for(cl=0;cl<wrdA->cl.c;cl++)
   {
    clause*lc=&wrdA->cl.b[cl];
+#if defined(BANN_RNN)
+   bann_startrnn(&ner->N);
+#endif
    for(w=lc->from;w<lc->to;w++)
     {
      corpus_setinputlayer(ner,wrdA,cl,w,in);           
@@ -859,7 +919,10 @@ real corpus_predict(NERtagger*ner,bann_io*in,corpus*wrdA,const char*name,const c
  printf("%s \n",what);
 
  if(f)
+ {
+  sprintf(what,"EPOCHS: %d [%d] - Q: %.2f - POS: %.2f CHUNK: %.2f NER: %.2f",trainingepochs,ner->N.opt.optimize,(float)good*100/(float)(good+bad),F1[0],F1[1],F1[2]);  
   history_add(&ner->N,"bin/bann.log",name,what);
+ }
 
  if(f)
   {
@@ -980,6 +1043,9 @@ int main(int argc,const char*argv[])
      clause*lc=&train.cl.b[shuffledcl];
      if(lc->from>=lc->to)
       cnt=0;
+#if defined(BANN_RNN)
+     bann_startrnn(&NER.N);
+#endif
      for(w=lc->from;w<lc->to;w++)
       {       
        corpus_setinputlayer(&NER,&train,shuffledcl,w,&in);               
@@ -1037,9 +1103,9 @@ int main(int argc,const char*argv[])
     {
      real devqual;
      if(e+1==MAX_EPOCHS)
-      devqual=corpus_predict(&NER,&in,&dev,"eng.dev","bin/eng.dev.log");
+      devqual=corpus_predict(&NER,&in,&dev,"eng.dev",MAX_EPOCHS,"bin/eng.dev.log");
      else
-      devqual=corpus_predict(&NER,&in,&dev,"eng.dev",NULL);
+      devqual=corpus_predict(&NER,&in,&dev,"eng.dev",-1,NULL);
      if(devqual<prevdevqual)
       NER.N.opt.optimize=bann_optimizer_decay;
      else
@@ -1048,9 +1114,9 @@ int main(int argc,const char*argv[])
     }
    if((err<0.02f)||(e+1==MAX_EPOCHS))
     if(e+1==MAX_EPOCHS)
-     corpus_predict(&NER,&in,&test,"eng.test","bin/eng.test.log");         
+     corpus_predict(&NER,&in,&test,"eng.test",MAX_EPOCHS,"bin/eng.test.log");         
     else
-     corpus_predict(&NER,&in,&test,"eng.test",NULL);         
+     corpus_predict(&NER,&in,&test,"eng.test",-1,NULL);         
    if(err<lasterr)
     {
      bann_write(&NER.N,"bin/ner.bann",0);

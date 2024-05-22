@@ -16,7 +16,15 @@
 [eng.test]: 85800 x 96 x 71: [eng.test] Q: 85.58 - POS: 92.47 CHUNK: 94.13 NER: 81.96
 [eng.dev]: 85800 x 64 x 71: [eng.dev] Q: 87.05 - POS: 92.39 CHUNK: 94.79 NER: 86.33
 [eng.test]: 85800 x 64 x 71: [eng.test] Q: 85.46 - POS: 92.39 CHUNK: 94.14 NER: 81.94
-[eng.dev]: 83655 x 64 x 71: [eng.dev] Q: 85.22 - POS: 90.64 CHUNK: 94.20 NER: 85.96
-[eng.test]: 83655 x 64 x 71: [eng.test] Q: 83.58 - POS: 90.85 CHUNK: 93.62 NER: 80.31
-[eng.dev]: 93302 x 64 x 71: [eng.dev] Q: 84.20 - POS: 89.51 CHUNK: 94.16 NER: 86.09
-[eng.test]: 93302 x 64 x 71: [eng.test] Q: 82.53 - POS: 89.56 CHUNK: 93.46 NER: 80.86
+[eng.dev]: 88924 x 64 x 71: [eng.dev] Q: 87.08 - POS: 92.63 CHUNK: 94.77 NER: 86.07
+[eng.test]: 88924 x 64 x 71: [eng.test] Q: 85.49 - POS: 92.63 CHUNK: 94.09 NER: 80.68
+[eng.dev]: 87439 x 64 x 71: [eng.dev] Q: 87.06 - POS: 92.42 CHUNK: 94.83 NER: 85.71
+[eng.test]: 87439 x 64 x 71: [eng.test] Q: 85.48 - POS: 92.55 CHUNK: 94.09 NER: 81.12
+[eng.dev]: 87439 x 64 x 71: [eng.dev] Q: 86.53 - POS: 92.10 CHUNK: 94.67 NER: 85.15
+[eng.test]: 87439 x 64 x 71: [eng.test] Q: 84.96 - POS: 92.13 CHUNK: 93.97 NER: 81.33
+[eng.dev]: 87439 x 64 x 71: [eng.dev] Q: 86.48 - POS: 92.09 CHUNK: 94.67 NER: 84.74
+[eng.test]: 87439 x 64 x 71: [eng.test] Q: 84.80 - POS: 92.05 CHUNK: 93.97 NER: 80.64
+[eng.dev]: 87439 x 64 x 71: EPOCHS: 32 [0] - Q: 86.39 - POS: 91.98 CHUNK: 94.62 NER: 85.30
+[eng.test]: 87439 x 64 x 71: EPOCHS: 32 [0] - Q: 84.77 - POS: 91.95 CHUNK: 93.97 NER: 80.87
+[eng.dev]: 87439 x 64 x 71: EPOCHS: 32 [0] - Q: 86.98 - POS: 92.46 CHUNK: 94.72 NER: 85.72
+[eng.test]: 87439 x 64 x 71: EPOCHS: 32 [0] - Q: 85.29 - POS: 92.40 CHUNK: 94.06 NER: 81.04
