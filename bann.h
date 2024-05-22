@@ -381,7 +381,7 @@ void bann_new(bann*net,int input,int hidden,int hiddencount,int output)
                    ((hidden+1)*output+output+output) + 
                    ((hidden+1)*hidden+hidden*2)*(hiddencount-1) ); 
 #if defined(BANN_RNN)
- net->linearsize+=(input*hidden+1+hidden+input);
+ net->linearsize+=((hidden+1)*hidden+hidden*2);
 #endif
  ptr=net->linear=(real*)malloc( net->linearsize * sizeof(net->linear[0]) );
  assert(net->linear!=NULL);
@@ -404,7 +404,7 @@ void bann_new(bann*net,int input,int hidden,int hiddencount,int output)
  for(l=0;l<net->weightscount;l++)
   ptr=bann_setweighttemp(net,l,ptr);
 #if defined(BANN_RNN)
- ptr=bann_setweight(net,l,input,hidden,ptr,bann_activation_sigmoid,1); 
+ ptr=bann_setweight(net,l,hidden,hidden,ptr,bann_activation_sigmoid,1); 
  ptr=bann_setweighttemp(net,l,ptr);
 #endif
  assert((ptr-net->linear)==net->linearsize);
@@ -453,6 +453,10 @@ real*bann_predict(bann*net,const bann_io*input)
            sum+=input->fidx->hotval[j]*nn_getweight(net,l,input->fidx->hotpos[j],i);       
           break;
         }
+#if defined(BANN_RNN)
+       for(j=0;j<net->rweights[0].ins;j++)         
+        sum+=net->rweights[0].o[j] * net->rweights[0].w[j*net->rweights[0].ins+i];  
+#endif
       }
      else
       {
@@ -478,6 +482,13 @@ real*bann_predict(bann*net,const bann_io*input)
      
     }
   }
+ #if defined(BANN_RNN)
+ for(j=0;j<net->rweights[0].ins;j++)         
+  {
+   net->rweights[0].d[j]=net->rweights[0].o[j];
+   net->rweights[0].o[j]=net->weights[0].o[j];
+  }
+ #endif
   return net->weights[l-1].o;
 }
 
@@ -500,7 +511,7 @@ void bann_optimize(bann*net,real err)
    if(net->opt.errcnt>net->opt.speed)
     {
      real expand=1.0f,lowcut=0.25f;
-     int  errlow;
+     int  errlow=0;
 
      net->opt.errsum/=net->opt.errcnt;
      
@@ -648,6 +659,13 @@ real bann_train(bann*net,const bann_io*input,const bann_io*output)
           }
          break;
        }
+#if defined(BANN_RNN)
+      for(r=0;r<net->rweights[0].ins;r++)
+       {
+        net->rweights[0].w[c*net->rweights[0].ins+r]+=delta*learningrate*net->rweights[0].d[r];
+        bann_protect(net->rweights[0].w[c*net->weights[0].ins+r]);
+       }
+#endif
      }
      else
       {

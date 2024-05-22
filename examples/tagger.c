@@ -16,6 +16,8 @@
 #define MAX_EPOCHS         32
 #define MSE_STOP       0.001f
 
+#define MAX_ENDLENGTH       3
+
 // ----------------------------------
 
 // ----------------------------------
@@ -134,6 +136,37 @@ int cpos_normalize(const char*wrd,char*morph)
   strcpy(morph,m);
  return *m;
 }
+int cpos_safemorph(const char*wrd,char*morph)
+{
+ int  i=0,m=0,j,mask=0;
+ char codes[]="0Aa_^+";
+ while(wrd[i])
+  {
+   int a,c=char_get(wrd+i,&a);
+   if(char_isdigit(wrd+i,NULL))
+    mask|=1;
+   else
+   if(char_isupper(wrd+i,NULL))
+    mask|=2;
+   else
+    if(char_islower(wrd+i,NULL))
+     mask|=4;
+    else
+     if(char_ispunct(wrd+i,NULL))
+      if(str_charinset(wrd+i,".,:;+-=?!()[]/\\&%$£\"'@"))
+       mask|=32;
+      else
+       mask|=16;
+     else
+      mask|=8;
+   i+=a;
+  }
+ for(i=0,j=1;codes[i];i++,j*=2)
+  if(mask&j)
+   morph[m++]=codes[i];
+ morph[m]=0;
+ return m;
+}
 int cpos_morph(const char*wrd,char*morph,int end)
 {
  int i=0,j=0,fend=0;
@@ -166,7 +199,7 @@ int cpos_morph(const char*wrd,char*morph,int end)
       morph[j++]=code;
     }
     else
-     if((j>4)&&(morph[j-1]==code)&&(morph[j-2]==code))
+     if((j>3)&&(morph[j-1]==code)&&(morph[j-2]==code))
       ;
      else
       morph[j++]=code;
@@ -248,6 +281,13 @@ typedef struct dict_s
  int c,m;
  dict_entry_s *entry;
 } dict_s, *dict_t;
+
+int dictentry_compare(const void*a,const void*b)
+{
+ dict_entry_s*A=(dict_entry_s*)a;
+ dict_entry_s*B=(dict_entry_s*)b;
+ return B->cnt-A->cnt;
+}
 
 int dict_find(dict_t dict, const char *key)
 {
@@ -340,12 +380,16 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t*tagdict)
  avg=(sum-top)/(dict->c-1);
  avg2=max(2,avg/4);
  ttop=top*80/100;
+
+ if(0)
+  if(dict->c>6*1024)
+   avg2=dict->entry[6*1024].cnt;
  
  ner->usedchars[2]=1;
  for(e=0;e<dict->c;e++) 
   {
    char wrd[256],tmp[256];
-   int  len;
+   int  len,n=0;
    strcpy(wrd,dict->entry[e].key);
    len=(int)strlen(wrd);   
    if(len>ner->maxlen)
@@ -353,28 +397,26 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t*tagdict)
    len=0;
    _strlwr(wrd);
    if(cpos_normalize(wrd,tmp))
-    strcpy(wrd,tmp);
+    {strcpy(wrd,tmp);n=1;}
    while(wrd[len])
     {
      byte ch=(byte)wrd[len++];
      ner->usedchars[ch]=1;
     }
-   if(dict->entry[e].cnt>avg2)
-    dict_add(ner->cdict,dict->entry[e].key,dict->entry[e].cnt);
-   if(dict->entry[e].cnt<ttop)
-    {
-     char tmp[256];
-     if(cpos_morph(dict->entry[e].key,tmp,3))
-      dict_add(tdict,tmp,1);
-     if(cpos_morph(dict->entry[e].key,tmp,2))
-      dict_add(tdict,tmp,1);
-     if(cpos_morph(dict->entry[e].key,tmp,1))
-      dict_add(tdict,tmp,1);
-     if(cpos_morph(dict->entry[e].key,tmp,0))
-      dict_add(tdict,tmp,1);
-     if(cpos_morph(dict->entry[e].key,tmp,-1))
-      dict_add(tdict,tmp,1);
-    }
+   if(((dict->entry[e].cnt>avg2)&&char_isalpha(wrd,NULL))||n)
+    dict_add(ner->cdict,wrd,dict->entry[e].cnt);
+
+   if(n==0)
+    if(dict->entry[e].cnt<ttop)
+     {
+      char tmp[256];
+      int  end,id=-1;
+      for(end=MAX_ENDLENGTH;end>=-1;end--)
+       if(cpos_morph(wrd,tmp,end))
+        dict_add(tdict,tmp,1);
+      if(cpos_safemorph(wrd,tmp))
+       dict_add(tdict,tmp,1);
+     }
   }
 
  sum=top=0;
@@ -386,9 +428,17 @@ void NERtagger_new(NERtagger*ner,dict_t dict,dict_t*tagdict)
   }
  avg=(sum-top)/(tdict->c-1);
 
+ qsort(tdict->entry,tdict->c,sizeof(tdict->entry[0]),dictentry_compare);
+
+ if(0)
+  if(tdict->c>2*1024)
+   avg=tdict->entry[2048].cnt;
+
  for(e=0;e<tdict->c;e++) 
   if(tdict->entry[e].cnt>avg)
-    dict_add(ner->cdict,tdict->entry[e].key,tdict->entry[e].cnt);
+   dict_add(ner->cdict,tdict->entry[e].key,tdict->entry[e].cnt);
+  else
+   break;
 
  dict_free(tdict);
 
@@ -580,22 +630,17 @@ void corpus_remap(corpus*crp,dict_t cdict,corpus*remap)
     else
      {
       char tmp[256];
-      if(cpos_morph(fit,tmp,3)&&((id=dict_find(cdict,tmp))!=-1))
+      int  end=5,id=-1;
+      for(end=MAX_ENDLENGTH;end>=-1;end--)
+       if(cpos_morph(fit,tmp,end)&&((id=dict_find(cdict,tmp))!=-1))
+        break;
+      if(id!=-1)
        crp->wrd.b[e].fitR=id;
       else
-      if(cpos_morph(fit,tmp,2)&&((id=dict_find(cdict,tmp))!=-1))
-       crp->wrd.b[e].fitR=id;
-      else
-       if(cpos_morph(fit,tmp,1)&&((id=dict_find(cdict,tmp))!=-1))
+       if(cpos_safemorph(fit,tmp)&&((id=dict_find(cdict,tmp))!=-1))
         crp->wrd.b[e].fitR=id;
        else
-        if(cpos_morph(fit,tmp,0)&&((id=dict_find(cdict,tmp))!=-1))
-         crp->wrd.b[e].fitR=id;
-        else
-         if(cpos_morph(fit,tmp,-1)&&((id=dict_find(cdict,tmp))!=-1))
-          crp->wrd.b[e].fitR=id;
-         else
-          crp->wrd.b[e].fitR=-1;
+        crp->wrd.b[e].fitR=-1;
      }
    }
   else
@@ -721,13 +766,6 @@ void ner_qual(int*good,int*add,int*miss,int*start,real*F1,int rcnt)
   }
 }
 
-int dictentry_compare(const void*a,const void*b)
-{
- dict_entry_s*A=(dict_entry_s*)a;
- dict_entry_s*B=(dict_entry_s*)b;
- return B->cnt-A->cnt;
-}
-
 real corpus_predict(NERtagger*ner,bann_io*in,corpus*wrdA,const char*name,const char*outname)
 {
  bann*N=&ner->N;
@@ -791,7 +829,7 @@ real corpus_predict(NERtagger*ner,bann_io*in,corpus*wrdA,const char*name,const c
 
        if(f)
         if((sel[0]==correct[0])&&(sel[1]==correct[1])&&(sel[2]==correct[2]))
-         fprintf(f,"%s\t%s\t%s\n",fit,wrdA->tagdict[0]->entry[correct[0]].key,wrdA->tagdict[1]->entry[correct[1]].key,wrdA->tagdict[2]->entry[correct[2]].key);
+         fprintf(f,"%s\t%s\t%s\t%s\n",fit,wrdA->tagdict[0]->entry[correct[0]].key,wrdA->tagdict[1]->entry[correct[1]].key,wrdA->tagdict[2]->entry[correct[2]].key);
         else
          {
           char out[256];
@@ -818,12 +856,10 @@ real corpus_predict(NERtagger*ner,bann_io*in,corpus*wrdA,const char*name,const c
   }
  ner_qual(goodN,addN,missN,start,F1,3);
  sprintf(what,"[%s] Q: %.2f - POS: %.2f CHUNK: %.2f NER: %.2f",name,(float)good*100/(float)(good+bad),F1[0],F1[1],F1[2]);
- 
+ printf("%s \n",what);
+
  if(f)
-  {
-   printf("%s \n",what);
-   history_add(&ner->N,"bin/bann.log",name,what);
-  }
+  history_add(&ner->N,"bin/bann.log",name,what);
 
  if(f)
   {

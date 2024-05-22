@@ -86,7 +86,7 @@ Minimal sample to get a XOR behaviour from a **2-2-1** ann. It also used to quan
 
 It's more or less the "standard" test for anns. Here a **784-48-10** ann reaches around **96.48%** accuracy with **8** epochs, and that's a matter of few minutes.
 
-### FASHIN-MNIST (fashion-mnist.c) 
+### FASHION-MNIST (fashion-mnist.c) 
 
 A more complex task, still done with a common dataset. Here to get a little more than **87.20%** accuracy you need a **784-96-10** and around **8** epochs.
 
@@ -98,72 +98,70 @@ This is NOT a standard test for ann but a toy project to see how **bann_io** wor
 
 Input is **100k** cell wide BUT, using bann_io structure, training (and usage) keeps the average speed not too slow even on a small PC. And saving ann in a quantized way makes also the memory usage relatively small.
 
-Results - with such a simple implementation - are far from astonishing (**84.9%** of accuracy considering all the three fields together - **92.2%** POS, **94.1%** CHUNK and **78.1%** NER as **F1** considering each field in a separate way) but here we don't use ANY outside information - no embeddings or any statistical data or dictionary outside what we took from train dataset.
+Results - with such a simple implementation - are far from astonishing (**85.4** of accuracy considering all the three fields together - **92.3%** POS, **94.2%** CHUNK and **81.8%** NER as **F1** considering each field in a separate way) but here we don't use ANY outside information - no embeddings or any statistical data or dictionary outside what we took from train dataset.
 
 These are quality values for test dataset (after **32** epochs):
 
 	NER	F1	PREC	RECALL	CORRECT	MISS	ADD
-	I-ORG	74.67	72.59	76.88	1915	723	576
-	I-MISC	68.87	66.80	71.07	646	321	263
-	I-PER	85.25	85.04	85.47	2370	417	403
-	I-LOC	78.39	78.52	78.27	1502	411	417
+	I-ORG	77.33	77.63	77.04	1919	553	572
+	I-MISC	70.58	69.67	71.51	650	283	259
+	I-PER	88.45	88.23	88.68	2459	328	314
+	I-LOC	83.97	82.54	85.46	1640	347	279
 
 These are quality values for **dev** dataset:
 
 	NER	F1	PREC	RECALL	CORRECT	MISS	ADD
-	I-ORG	76.03	75.72	76.34	1597	512	495
-	I-MISC	75.31	80.23	70.97	897	221	367
-	I-PER	87.91	88.53	87.30	2749	356	400
-	I-LOC	81.99	82.33	81.66	1710	367	384
+	I-ORG	80.70	84.36	77.34	1618	300	474
+	I-MISC	80.23	82.58	78.01	986	208	278
+	I-PER	91.37	91.15	91.58	2884	280	265
+	I-LOC	87.25	86.77	87.73	1837	280	257
 
 Out of curiosity, there are values for test dataset for the other two fields (**POS** and **CHUNK/TYPE**)
 
-	NNP	92.87	90.88	94.95	8161	819	434
-	VBZ	78.09	88.41	69.92	351	46	151
-	JJ	74.76	76.57	73.05	1748	535	645
-	NN	86.96	86.56	87.37	4308	669	623
-	TO	99.20	100.00	98.41	805	0	13
-	VB	86.05	89.00	83.28	777	96	156
-	.	99.91	99.94	99.88	1628	1	2
-	CD	98.21	97.27	99.16	5912	166	50
-	DT	98.61	98.30	98.93	2769	48	30
-	VBD	89.59	90.07	89.11	1514	167	185
-	IN	97.98	97.79	98.16	3944	89	74
-	PRP	95.82	96.95	94.71	573	18	32
-	NNS	88.24	86.82	89.70	1950	296	224
-	VBP	78.40	83.33	74.02	245	49	86
-	MD	96.98	98.09	95.90	257	5	11
-	VBN	77.71	79.40	76.10	659	171	207
-	POS	96.51	93.51	99.71	346	24	1
-	JJR	60.22	59.57	60.87	56	38	36
-	"	100.00	100.00	100.00	421	0	0
-	RB	81.24	86.22	76.80	682	109	206
-	,	99.97	99.94	100.00	1637	1	0
-	CC	99.08	99.47	98.69	755	4	10
-	WDT	90.14	91.43	88.89	96	9	12
-	(	99.85	100.00	99.71	686	0	2
-	)	100.00	100.00	100.00	686	0	0
-	:	99.33	99.83	98.83	592	1	7
+	NNP	93.41	90.92	96.06	8256	825	339
+	VBZ	77.61	87.50	69.72	350	50	152
+	JJ	76.24	79.53	73.21	1752	451	641
+	NN	87.00	85.64	88.40	4359	731	572
+	TO	99.51	99.75	99.27	812	2	6
+	VB	86.88	90.68	83.39	778	80	155
+	.	99.94	99.88	100.00	1630	2	0
+	CD	98.26	97.44	99.09	5908	155	54
+	DT	98.95	98.89	99.00	2771	31	28
+	VBD	88.95	89.56	88.35	1501	175	198
+	IN	97.99	97.77	98.21	3946	90	72
+	PRP	97.83	98.98	96.69	585	6	20
+	NNS	87.19	85.83	88.59	1926	318	248
+	VBP	82.74	89.75	76.74	254	29	77
+	MD	97.94	98.13	97.76	262	5	6
+	VBN	77.07	77.11	77.02	667	198	199
+	POS	96.77	94.51	99.14	344	20	3
+	JJR	64.39	58.41	71.74	66	47	26
+	"	99.88	99.76	100.00	421	1	0
+	RB	81.19	86.11	76.80	682	110	206
+	,	100.00	100.00	100.00	1637	0	0
+	FW	24.66	22.50	27.27	9	31	24
+	CC	99.28	99.87	98.69	755	1	10
+	WDT	91.43	94.12	88.89	96	6	12
+	(	99.78	99.85	99.71	686	1	2
+	)	99.85	100.00	99.71	684	0	2
+	:	100.00	100.00	100.00	599	0	0
 	PRP$	98.66	97.68	99.66	295	7	1
-	RBR	26.47	36.00	20.93	9	16	34
-	VBG	76.29	76.13	76.45	370	116	114
-	EX	82.19	76.92	88.24	30	9	4
-	WP	96.58	94.17	99.12	113	7	1
-	WRB	96.55	98.59	94.59	70	1	4
-	-X-	99.78	99.57	100.00	232	1	0
-	$	95.74	95.74	95.74	90	4	4
-	RP	64.65	69.57	60.38	64	28	42
-	NNPS	42.75	54.90	35.00	56	46	104
-	SYM	95.08	91.34	99.15	116	11	1
-	JJS	51.79	51.79	51.79	29	27	27
+	VBG	76.05	79.19	73.14	354	93	130
+	WP	92.50	88.10	97.37	111	15	3
+	WRB	94.12	91.14	97.30	72	7	2
+	$	97.33	97.85	96.81	91	2	3
+	RP	67.35	73.33	62.26	66	24	40
+	NNPS	37.33	64.62	26.25	42	23	118
+	SYM	96.23	94.26	98.29	115	7	2
+	JJS	6.06	20.00	3.57	2	8	54
 
-	I-NP	96.79	95.69	97.90	27703	1247	593
-	I-VP	90.19	91.53	88.88	5013	464	627
-	O	95.15	93.45	96.92	6019	422	191
-	I-PP	95.80	94.86	96.76	3822	207	128
-	B-NP	73.81	84.40	65.59	568	105	298
-	I-SBAR	77.68	82.95	73.04	214	44	79
-	I-ADJP	49.21	58.26	42.60	141	101	190
-	I-ADVP	66.67	74.53	60.31	354	121	233
-	I-PRT	69.39	79.07	61.82	68	18	42
-	B-PP	65.00	72.22	59.09	26	10	18
+	O	95.30	93.63	97.02	6026	410	185
+	I-NP	96.86	95.70	98.05	27744	1248	552
+	I-VP	90.07	91.42	88.76	5006	470	634
+	I-PP	95.55	94.97	96.13	3797	201	153
+	B-NP	74.36	85.46	65.82	570	97	296
+	I-SBAR	76.76	81.30	72.70	213	49	80
+	I-ADJP	52.80	65.77	44.11	146	76	185
+	I-ADVP	67.91	75.05	62.01	364	121	223
+	I-PRT	70.59	76.60	65.45	72	22	38
+	B-PP	62.50	69.44	56.82	25	11	19

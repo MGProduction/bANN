@@ -2,3 +2,21 @@
 [eng.test]: 107283 x 64 x 71: [eng.test] Q: 84.99 - POS: 92.25 CHUNK: 94.14 NER: 78.27
 [mnist]: 784 x 64 x 10 (epochs: 8): 96.48%
 [fashion]: 784 x 96 x 10 (epochs: 8): 87.20%
+[eng.dev]: 85745 x 64 x 71: [eng.dev] Q: 87.08 - POS: 92.42 CHUNK: 94.78 NER: 86.20
+[eng.test]: 85745 x 64 x 71: [eng.test] Q: 85.49 - POS: 92.39 CHUNK: 94.20 NER: 81.86
+[eng.dev]: 85789 x 64 x 71: [eng.dev] Q: 87.01 - POS: 92.30 CHUNK: 94.78 NER: 86.81
+[eng.test]: 85789 x 64 x 71: [eng.test] Q: 85.53 - POS: 92.56 CHUNK: 94.20 NER: 81.24
+[eng.dev]: 85800 x 64 x 71: [eng.dev] Q: 87.05 - POS: 92.39 CHUNK: 94.79 NER: 86.33
+[eng.test]: 85800 x 64 x 71: [eng.test] Q: 85.46 - POS: 92.39 CHUNK: 94.14 NER: 81.94
+[eng.dev]: 85800 x 64 x 71: [eng.dev] Q: 87.06 - POS: 92.40 CHUNK: 94.80 NER: 86.30
+[eng.test]: 85800 x 64 x 71: [eng.test] Q: 85.57 - POS: 92.54 CHUNK: 94.11 NER: 82.00
+[eng.dev]: 85800 x 32 x 71: [eng.dev] Q: 86.25 - POS: 91.86 CHUNK: 94.58 NER: 85.97
+[eng.test]: 85800 x 32 x 71: [eng.test] Q: 84.74 - POS: 91.88 CHUNK: 94.01 NER: 80.94
+[eng.dev]: 85800 x 96 x 71: [eng.dev] Q: 87.23 - POS: 92.54 CHUNK: 94.88 NER: 86.42
+[eng.test]: 85800 x 96 x 71: [eng.test] Q: 85.58 - POS: 92.47 CHUNK: 94.13 NER: 81.96
+[eng.dev]: 85800 x 64 x 71: [eng.dev] Q: 87.05 - POS: 92.39 CHUNK: 94.79 NER: 86.33
+[eng.test]: 85800 x 64 x 71: [eng.test] Q: 85.46 - POS: 92.39 CHUNK: 94.14 NER: 81.94
+[eng.dev]: 83655 x 64 x 71: [eng.dev] Q: 85.22 - POS: 90.64 CHUNK: 94.20 NER: 85.96
+[eng.test]: 83655 x 64 x 71: [eng.test] Q: 83.58 - POS: 90.85 CHUNK: 93.62 NER: 80.31
+[eng.dev]: 93302 x 64 x 71: [eng.dev] Q: 84.20 - POS: 89.51 CHUNK: 94.16 NER: 86.09
+[eng.test]: 93302 x 64 x 71: [eng.test] Q: 82.53 - POS: 89.56 CHUNK: 93.46 NER: 80.86
