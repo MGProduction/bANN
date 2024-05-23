@@ -11,10 +11,12 @@
 #include "bann.h"
 
 #define MAX_CHARS        256
-#define NET_HIDDEN_COUNT   4
+#define NET_HIDDEN_COUNT 128
 
-#define SEQLEN             2
+#define SEQLEN            24
 #define MAX_EPOCHS        32
+
+#define ERRORLEVEL      0.20f
 
 int ch2id[MAX_CHARS];
 int id2ch[MAX_CHARS];
@@ -152,20 +154,6 @@ void generatetext(bann*N,int hm,int e)
   printf("%d: %s\n\n",e,output);
 }
 
-real calcloss(real*output,bann_io*out,int hm)
-{
- real loss=0;
- int  i,c=0;
- for(i=0;i<hm;i++)
- {
-  real val=0;
-  if((c<out->idx->hotcnt)&&(out->idx->hotpos[c]==i))
-   {val=1;c++;}
-  loss+=-logf(output[i]);
- }
- return loss;
-}
-
 int main()
 {
  bann   N; 
@@ -175,95 +163,85 @@ int main()
 
  if(createnetfromtextfile(&N,"bin/data/text/skip_sherlock.txt",&file,&size,&vocab_size))
   {
-   int     e,I[2],O[2],good=0,bad=0,sel;   
-   size_t  seqlen=SEQLEN,s;
-   real*   outseq,*hprev,*hidseq;
+   int      e,I[2],O[2],good=0,bad=0,sel,turn=0;   
+   real     smoothloss;
+   size_t   seqlen=SEQLEN,s;
    bann_idx idxI,idxO;
-   bann_io trainI,trainO; 
+   bann_io  trainI,trainO; 
+   bannrnn  hlp;
    trainI.kind=idx;trainI.idx=&idxI;trainI.idx->hotpos=&I[0];
    trainO.kind=idx;trainO.idx=&idxO;trainO.idx->hotpos=&O[0];
    printf("training...\n");
    // timed output values
-   outseq=(real*)malloc(N.weights[N.weightscount-1].outs*seqlen*sizeof(outseq[0]));
-   hidseq=(real*)malloc(N.weights[0].outs*seqlen*sizeof(outseq[0]));
-   hprev=(real*)malloc(N.rweights[0].ins*seqlen*sizeof(outseq[0]));
+   bannrnn_new(&hlp,&N,seqlen);
 
-   bann_allocrnntraining(&N);
-   
-   for(e=0;e<MAX_EPOCHS;e++)
+   smoothloss=-logf(1.0f/vocab_size)*seqlen;	// inital loss
+
+   for(e=0;(e<MAX_EPOCHS)&&(smoothloss>ERRORLEVEL);e++)
     {                    
-     for(i=0;i<size-seqlen;i++)
+     i=0;
+     while(i<size-seqlen)
       {
        real loss=0,err=0;
-       // forward pass;
-       bann_startrnn(&N);
+
+       // forward pass using rnn
+       bannrnn_start(&hlp,&N,(i==0));
        for(s=0;s<seqlen;s++)
         {
+         real*output;
+         int  outid=ch2id[file[i+s+1]];
          trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=ch2id[file[i+s]]; 
-         trainO.idx->hotcnt=1;trainO.idx->hotpos[0]=ch2id[file[i+s+1]];
+         trainO.idx->hotcnt=1;trainO.idx->hotpos[0]=outid;
          // save previous state
-         memcpy(hprev+s*N.rweights[0].ins,N.rweights[0].o,N.rweights[0].ins*sizeof(hprev[0]));
+         bannrnn_hprev(&hlp,&N,s,bannrnn_push);
          // forward
-         bann_predict(&N,&trainI);
+         output=bann_predict(&N,&trainI);
          // save output state
-         memcpy(hidseq+s*N.weights[0].outs,N.weights[0].o,N.weights[0].outs*sizeof(outseq[0]));         
-         memcpy(outseq+s*N.weights[1].outs,N.weights[1].o,N.weights[1].outs*sizeof(hidseq[0]));                  
-
+         bannrnn_hidout(&hlp,&N,s,bannrnn_push);
          if((N.weights[1].flags&7)==bann_activation_softmax)
-          loss+=-logf(outseq[s*seqlen+trainO.idx->hotpos[0]]);
+          loss+=-logf(output[outid]);
          else
-          loss+=0.5f*(1-outseq[s*seqlen+trainO.idx->hotpos[0]])*(1-outseq[s*seqlen+trainO.idx->hotpos[0]]);
+          loss+=0.5f*(1-output[outid])*(1-output[outid]);
         }
-       // backward pass
+       // save last hidden output
+       bannrnn_hprev(&hlp,&N,s,bannrnn_push);    
+
+       smoothloss = smoothloss * 0.999f + loss * 0.001f;
+
+       // backward pass - back propagation thru time 
        while(s--)
         {
          trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=ch2id[file[i+s]];         
          trainO.idx->hotcnt=1;trainO.idx->hotpos[0]=ch2id[file[i+s+1]];
-         // restore output and hidden
-         memcpy(N.weights[0].o,hidseq+s*N.weights[0].outs,N.weights[0].outs*sizeof(hidseq[0]));         
-         memcpy(N.weights[1].o,outseq+s*N.weights[1].outs,N.weights[1].outs*sizeof(outseq[0]));                  
-         // restore previous
-         memcpy(N.rweights[0].d,hprev+s*N.rweights[0].ins,N.rweights[0].ins*sizeof(hprev[0]));
-         // back 
-         err+=bann_backwardrnn(&N,&trainI,&trainO);
+         err+=bannrnn_backward(&hlp,&N,s,&trainI,&trainO);
         }
-       bann_updatenntraining(&N,err,seqlen);
-       if(((i&0xFF)==0xFF)||(i+1==size-seqlen))
-        printf("epochs: %d - pos: %d/%d - loss: %.2f \r",e,i,size,loss);
-       if((i&0x3FF)==0x3FF)
-        if(1)
-         {
-          printf("\ngenerating: ");
-          generatetext(&N,64,e+1);
-         }
-        else
-         {
-          size_t i;
-          printf("\ncheck on input text...\n");
-          bann_startrnn(&N);
-          for(i=0;i<size-1;i++)
-           {     
-            trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=ch2id[file[i]];
-            bann_predict(&N,&trainI);
-            sel=bann_gethighestoutput(&N);
-            if(id2ch[sel]==file[i+1])
-             good++;
-            else
-             bad++;
-            printf("epochs: %d - pos: %d/%d - accuracy: %.2f \r",e,i,size,(float)good*100.0f/(float)(bad+good));
-           }
-          printf("\n");
-         }
+       bannrnn_updatenntraining(&hlp,&N,err,seqlen);
+       
+       // restore last hidden output
+       bannrnn_hprev(&hlp,&N,s,bannrnn_pull);              
+       i+=seqlen;
+
+       turn++;
+
+       if((turn&0x7F)==0x7F)
+        {
+         printf("epochs: %d - pos: %d/%d - loss: %.2f \r",e,i,size,smoothloss);
+         printf("\ngenerating: ");
+          
+         bannrnn_hprev(&hlp,&N,s,bannrnn_push);       
+         generatetext(&N,64,-1);
+         bannrnn_hprev(&hlp,&N,s,bannrnn_pull);
+        }
+        
       }
      printf("\ngenerating: ");
      generatetext(&N,64,e+1);
     }
-   free(outseq);
-   free(hidseq);
-   free(hprev);
-   bann_freernntraining(&N);
+
+   bannrnn_delete(&hlp);
+
    printf("check on input text...\n");
-   bann_startrnn(&N);
+   bannrnn_start(NULL,&N,1);
    for(i=0;i<size-1;i++)
     {     
      trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=ch2id[file[i]];
