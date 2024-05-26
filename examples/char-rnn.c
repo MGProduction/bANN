@@ -13,7 +13,7 @@
 #define MAX_CHARS        256
 #define NET_HIDDEN_COUNT 128
 
-#define SEQLEN            24
+#define SEQLEN            25
 #define MAX_EPOCHS        32
 
 #define ERRORLEVEL      0.20f
@@ -93,15 +93,6 @@ int getnextch(bann*N)
  real*output=N->weights[N->weightscount-1].o;
  real cdf[MAX_CHARS]; 
  real sum=0.0f,uniform_samples;
- /*real softmax[MAX_CHARS];
- for(op=0;op<outputcnt;op++)
- {
-  softmax[op]=expf(output[op]);
-  sum+=softmax[op];
- }
- for(op=0;op<outputcnt;op++)
-  softmax[op]=softmax[op]/sum;
- */
  sum=0;
  for(op=0;op<outputcnt;op++)
   {
@@ -131,7 +122,7 @@ void generatetext(bann*N,int hm,int e)
  bann_idx idxI;
  bann_io trainI;
  
- trainI.kind=idx;trainI.idx=&idxI;trainI.idx->hotpos=&I[0];
+ trainI.kind=iokind_idx;trainI.idx=&idxI;trainI.idx->hotpos=&I[0];
  
  sel=getnextch(N);
  trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=sel;
@@ -169,8 +160,8 @@ int main()
    bann_idx idxI,idxO;
    bann_io  trainI,trainO; 
    bannrnn  hlp;
-   trainI.kind=idx;trainI.idx=&idxI;trainI.idx->hotpos=&I[0];
-   trainO.kind=idx;trainO.idx=&idxO;trainO.idx->hotpos=&O[0];
+   trainI.kind=iokind_idx;trainI.idx=&idxI;trainI.idx->hotpos=&I[0];
+   trainO.kind=iokind_idx;trainO.idx=&idxO;trainO.idx->hotpos=&O[0];
    printf("training...\n");
    // timed output values
    bannrnn_new(&hlp,&N,seqlen);
@@ -186,6 +177,8 @@ int main()
 
        // forward pass using rnn
        bannrnn_start(&hlp,&N,(i==0));
+       
+       bannrnn_hprev(&hlp,&N,-1,bannrnn_push);
        for(s=0;s<seqlen;s++)
         {
          real*output;

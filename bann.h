@@ -39,11 +39,11 @@ typedef float         real;
 typedef unsigned char byte;
 
 #if !defined(BANN_IO_DEFINED)
-enum {
- standard=0,
- idx=1,
- fidx=2,
-}bann_iokind;
+enum bann_iokind{
+ iokind_standard=0,
+ iokind_idx=1,
+ iokind_fidx=2,
+};
 
 typedef struct{
  int*hotpos;
@@ -423,7 +423,7 @@ void bannrnn_new(bannrnn*hlp,bann*net,int seqlen)
  memset(hlp,0,sizeof(bannrnn));
  hlp->outseq=(real*)malloc(net->weights[net->weightscount-1].outs*seqlen*sizeof(hlp->outseq[0]));
  hlp->hidseq=(real*)malloc(net->weights[0].outs*seqlen*sizeof(hlp->hidseq[0]));
- hlp->hprev=(real*)malloc(net->rweights[0].ins*(seqlen+1)*sizeof(hlp->hprev[0]));
+ hlp->hprev=(real*)malloc(net->rweights[0].ins*(seqlen+2)*sizeof(hlp->hprev[0]));
  hlp->seqlen=seqlen;
 
  hlp->_weights=(weight*)malloc((net->weightscount+1)*sizeof(weight));
@@ -486,30 +486,32 @@ void bannrnn_updatenntraining(bannrnn*hlp,bann*net,real err,int seqlen)
    memset(hlp->_adagrad[l],0,net->weights[l].ins*net->weights[l].outs*sizeof(hlp->_adagrad[l][0]));
    for(c=0;c<net->weights[l].outs;c++)
     {
-     // -- net->weights[l].bias[c]+=(hlp->_weights[l].bias[c]/seqlen)*net->opt.learningrate;
-     if(net->weights[l].bias[c]<-5)
-      net->weights[l].bias[c]=-5;
-     else
-     if(net->weights[l].bias[c]>5)
-      net->weights[l].bias[c]=5;
+     real val;
      for(r=0;r<net->weights[l].ins;r++)
       {
-       real val;
-       if(0)
+       val=hlp->_weights[l].w[c*net->weights[l].ins+r];
+       hlp->_adagrad[l][c*net->weights[l].ins+r]+=val*val;
+       
+       val=-net->opt.learningrate*val/sqrtf(hlp->_adagrad[l][c*net->weights[l].ins+r] + 1e-8);        
+
+       if(val)
         {
-        val=hlp->_weights[l].w[c*net->weights[l].ins+r]*hlp->_weights[l].w[c*net->weights[l].ins+r];
-        hlp->_adagrad[l][c*net->weights[l].ins+r]+=val;
-        val=net->opt.learningrate*hlp->_adagrad[l][c*net->weights[l].ins+r]/sqrtf(hlp->_adagrad[l][c*net->weights[l].ins+r] + 1e-8);        
+         net->weights[l].w[c*net->weights[l].ins+r]+=val;
+         if(net->weights[l].w[c*net->weights[l].ins+r]<-5)
+          net->weights[l].w[c*net->weights[l].ins+r]=-5;
+         else
+         if(net->weights[l].w[c*net->weights[l].ins+r]>5)
+          net->weights[l].w[c*net->weights[l].ins+r]=5;
         }
-       else
-        val=hlp->_weights[l].w[c*net->weights[l].ins+r]*net->opt.learningrate;     
-       net->weights[l].w[c*net->weights[l].ins+r]-=val;
-       if(net->weights[l].w[c*net->weights[l].ins+r]<-5)
-        net->weights[l].w[c*net->weights[l].ins+r]=-5;
-       else
-       if(net->weights[l].w[c*net->weights[l].ins+r]>5)
-        net->weights[l].w[c*net->weights[l].ins+r]=5;
       }
+      val=hlp->_weights[l].bias[c];
+      val=-net->opt.learningrate*val/sqrtf(val*val + 1e-8);        
+      net->weights[l].bias[c]-=val;
+      if(net->weights[l].bias[c]<-5)
+       net->weights[l].bias[c]=-5;
+      else
+      if(net->weights[l].bias[c]>5)
+       net->weights[l].bias[c]=5;
      }
   }
  if(net->opt.optimize)
@@ -520,12 +522,12 @@ int bannrnn_hprev(bannrnn*hlp,bann*N,int s,int mode)
  if((s>=0)&&(s<hlp->seqlen+1))
   {
    if(mode==bannrnn_push)    
-    memcpy(hlp->hprev+s*N->rweights[0].ins,N->rweights[0].o,N->rweights[0].ins*sizeof(hlp->hprev[0]));
+    memcpy(hlp->hprev+(s+1)*N->rweights[0].ins,N->rweights[0].o,N->rweights[0].ins*sizeof(hlp->hprev[0]));
    else
     if(s==hlp->seqlen) // last one should be set as ready to go on
-     memcpy(N->rweights[0].o,hlp->hprev+s*N->rweights[0].ins,N->rweights[0].ins*sizeof(hlp->hprev[0]));
+     memcpy(N->rweights[0].o,hlp->hprev+(s+1)*N->rweights[0].ins,N->rweights[0].ins*sizeof(hlp->hprev[0]));
     else // other ones are instead used as BEFORE hidden status
-     memcpy(N->rweights[0].d,hlp->hprev+s*N->rweights[0].ins,N->rweights[0].ins*sizeof(hlp->hprev[0]));
+     memcpy(N->rweights[0].d,hlp->hprev+(s+1)*N->rweights[0].ins,N->rweights[0].ins*sizeof(hlp->hprev[0]));
    return 1;
   }
  else
@@ -618,28 +620,24 @@ real bannrnn_backward(bannrnn*hlp,bann*net,int s,const bann_io*input,const bann_
  real err=0; 
  real*toutput=hlp->outseq+s*net->weights[1].outs;
  real*thidden=hlp->hidseq+s*net->weights[0].outs;
- real*tthidden;
- if(s)
-  tthidden=hlp->hidseq+(s-1)*net->weights[0].outs;
- else
-  tthidden=hlp->hprev+hlp->seqlen*net->weights[0].outs;
+ real*tthidden=hlp->hidseq+((s+1)-1)*net->weights[0].outs;
  // calc error deltas
  for(c=0;c<net->weights[l].outs;c++)
   {
    real error,val=0;
    switch(output->kind)
     {
-     case standard:
+     case iokind_standard:
       val=output->linear[c];
      break;
-     case idx:
+     case iokind_idx:
       if((h<output->idx->hotcnt)&&(c==output->idx->hotpos[h]))
        {
         val=1;
         h++;
        }
       break;
-     case fidx:
+     case iokind_fidx:
       if((h<output->fidx->hotcnt)&&(c==output->fidx->hotpos[h]))
        {
         val=output->fidx->hotval[h];
@@ -656,7 +654,8 @@ real bannrnn_backward(bannrnn*hlp,bann*net,int s,const bann_io*input,const bann_
       delwhy[op][nHiddenNodes] += dy[op][0];  // derivative of output bias
     }
    */
-   error=(toutput[c]-val);
+   toutput[c]-=val;
+   error=toutput[c];
    for(r=0;r<net->weights[l].ins;r++)
     //hlp->delwhy
     hlp->_weights[1].w[c*net->weights[l].ins+r]+=error*thidden[r];
@@ -676,6 +675,7 @@ real bannrnn_backward(bannrnn*hlp,bann*net,int s,const bann_io*input,const bann_
       dh[hi][0] = sum + dhnext[hi][0];
     }
  */
+ {
  for(r=0;r<net->weights[l].ins;r++)
   {
    real sum=0;
@@ -684,6 +684,7 @@ real bannrnn_backward(bannrnn*hlp,bann*net,int s,const bann_io*input,const bann_
    //hlp->dh[
    hlp->_weights[0].d[r]=sum+hlp->_rweights[0].o[r];//hlp->dhnext[r];
   }
+ }
 
   /*
   for(hi = 0; hi <nHiddenNodes; hi++){
@@ -712,13 +713,13 @@ real bannrnn_backward(bannrnn*hlp,bann*net,int s,const bann_io*input,const bann_
       hlp->_weights[0].w[r*net->weights[0].ins+c] += hlp->_rweights[0].d[r];
      }
    }
-  for(r=0;r<net->rweights[l].outs;r++)
+  for(r=0;r<net->rweights[0].outs;r++)
    {
     real sum=0;
     /*
     for(op = 0; op < nHiddenNodes; op++){
           delwhh[hi][op] += dhraw[hi][0]* hs[op][t-1];
-    */
+    */ 
     for(c=0;c<net->rweights[0].ins;c++)
      {
       hlp->_rweights[0].w[r*net->rweights[0].ins+c] += hlp->_rweights[0].d[r] * tthidden[c];
@@ -734,7 +735,7 @@ real bannrnn_backward(bannrnn*hlp,bann*net,int s,const bann_io*input,const bann_
     */
     sum=0;
     for(c=0;c<net->rweights[0].ins;c++)
-     sum += net->rweights[0].w[r*net->rweights[0].ins+c]*hlp->_rweights[0].d[c];//hlp->dhraw[c];
+     sum += net->rweights[0].w[c*net->rweights[0].ins+r]*hlp->_rweights[0].d[c];//hlp->dhraw[c];
     //hlp->dhnext[r]=sum;
     hlp->_rweights[0].o[r]=sum;
     if(sum>4)
@@ -889,15 +890,15 @@ real*bann_predict(bann*net,const bann_io*input)
        // use input instead of previous hidden state
        switch(input->kind)
         {
-         case standard:
+         case iokind_standard:
           for(j=0;j<net->weights[l].ins;j++)                     
            sum+=input->linear[j]*nn_getweight(net,l,j,i);       
           break;
-         case idx:
+         case iokind_idx:
           for(j=0;j<input->idx->hotcnt;j++)        
            sum+=nn_getweight(net,l,input->idx->hotpos[j],i);       
           break;
-         case fidx:
+         case iokind_fidx:
           for(j=0;j<input->fidx->hotcnt;j++)        
            sum+=input->fidx->hotval[j]*nn_getweight(net,l,input->fidx->hotpos[j],i);       
           break;
@@ -905,6 +906,7 @@ real*bann_predict(bann*net,const bann_io*input)
 #if defined(BANN_RNN)
        for(j=0;j<net->rweights[0].ins;j++)         
         sum+=net->rweights[0].o[j] * net->rweights[0].w[i*net->rweights[0].ins+j];  
+       sum+=-net->rweights[0].bias[i];
 #endif
       }
      else
@@ -1041,17 +1043,17 @@ real bann_backward(bann*net,const bann_io*input,const bann_io*output)
    real error,derror,val=0;
    switch(output->kind)
     {
-     case standard:
+     case iokind_standard:
       val=output->linear[c];
      break;
-     case idx:
+     case iokind_idx:
       if((h<output->idx->hotcnt)&&(c==output->idx->hotpos[h]))
        {
         val=1;
         h++;
        }
       break;
-     case fidx:
+     case iokind_fidx:
       if((h<output->fidx->hotcnt)&&(c==output->fidx->hotpos[h]))
        {
         val=output->fidx->hotval[h];
@@ -1088,7 +1090,7 @@ real bann_backward(bann*net,const bann_io*input,const bann_io*output)
      {
       switch(input->kind)
        {
-        case standard:
+        case iokind_standard:
          for(r=0;r<net->weights[l].ins;r++)
           {
            net->weights[l].w[c*net->weights[l].ins+r]+=delta*learningrate*input->linear[r];
@@ -1096,7 +1098,7 @@ real bann_backward(bann*net,const bann_io*input,const bann_io*output)
            bann_protect(net->weights[l].w[c*net->weights[l].ins+r]);
           }
          break;
-        case idx:
+        case iokind_idx:
          for(r=0;r<input->idx->hotcnt;r++)
           {      
            int rr=input->idx->hotpos[r];
@@ -1105,7 +1107,7 @@ real bann_backward(bann*net,const bann_io*input,const bann_io*output)
            bann_protect(net->weights[l].w[c*net->weights[l].ins+rr]);
           }
          break;
-        case fidx:
+        case iokind_fidx:
          for(r=0;r<input->fidx->hotcnt;r++)
           {      
            int rr=input->fidx->hotpos[r];
