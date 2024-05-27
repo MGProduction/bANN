@@ -430,7 +430,7 @@ void bannrnn_new(bannrnn*hlp,bann*net,int seqlen)
  memset(hlp->_weights,0,(net->weightscount+1)*sizeof(weight));
  for(i=0;i<=net->weightscount;i++)
   {
-   hlp->_adagrad[i]=(real*)malloc(net->weights[i].ins*net->weights[i].outs*sizeof(hlp->_weights[i].w[0]));
+   hlp->_adagrad[i]=(real*)malloc((net->weights[i].ins+1)*(net->weights[i].outs+1)*sizeof(hlp->_weights[i].w[0]));
    hlp->_weights[i].ins=net->weights[i].ins;
    hlp->_weights[i].outs=net->weights[i].outs;
    hlp->_weights[i].w=(real*)malloc(net->weights[i].ins*net->weights[i].outs*sizeof(hlp->_weights[i].w[0]));
@@ -483,20 +483,21 @@ void bannrnn_updatenntraining(bannrnn*hlp,bann*net,real err,int seqlen)
  for(l=0;l<=net->weightscount;l++)
   {
    int c,r;
-   memset(hlp->_adagrad[l],0,net->weights[l].ins*net->weights[l].outs*sizeof(hlp->_adagrad[l][0]));
+   memset(hlp->_adagrad[l],0,(net->weights[l].ins+1)*(net->weights[l].outs+1)*sizeof(hlp->_adagrad[l][0]));
    for(c=0;c<net->weights[l].outs;c++)
     {
      real val;
      for(r=0;r<net->weights[l].ins;r++)
       {
        val=hlp->_weights[l].w[c*net->weights[l].ins+r];
-       hlp->_adagrad[l][c*net->weights[l].ins+r]+=val*val;
-       
-       val=-net->opt.learningrate*val/sqrtf(hlp->_adagrad[l][c*net->weights[l].ins+r] + 1e-8);        
-
        if(val)
         {
+         hlp->_adagrad[l][c*(net->weights[l].ins+1)+r]+=val*val;       
+         val=-net->opt.learningrate*val/sqrtf(hlp->_adagrad[l][c*(net->weights[l].ins+1)+r] + 1e-8);                 
+         //val=-net->opt.learningrate*val;
+
          net->weights[l].w[c*net->weights[l].ins+r]+=val;
+
          if(net->weights[l].w[c*net->weights[l].ins+r]<-5)
           net->weights[l].w[c*net->weights[l].ins+r]=-5;
          else
@@ -504,14 +505,21 @@ void bannrnn_updatenntraining(bannrnn*hlp,bann*net,real err,int seqlen)
           net->weights[l].w[c*net->weights[l].ins+r]=5;
         }
       }
-      val=hlp->_weights[l].bias[c];
-      val=-net->opt.learningrate*val/sqrtf(val*val + 1e-8);        
-      net->weights[l].bias[c]-=val;
-      if(net->weights[l].bias[c]<-5)
-       net->weights[l].bias[c]=-5;
-      else
-      if(net->weights[l].bias[c]>5)
-       net->weights[l].bias[c]=5;
+      val=hlp->_weights[l].bias[c];      
+      if(val)
+       {
+        hlp->_adagrad[l][c*(net->weights[l].ins+1)+r]+=val*val;
+        val=-net->opt.learningrate*val/sqrtf(hlp->_adagrad[l][c*(net->weights[l].ins+1)+r] + 1e-8);        
+        //val=-net->opt.learningrate*val;
+
+        net->weights[l].bias[c]-=val;
+
+        if(net->weights[l].bias[c]<-5)
+         net->weights[l].bias[c]=-5;
+        else
+        if(net->weights[l].bias[c]>5)
+         net->weights[l].bias[c]=5;
+       }
      }
   }
  if(net->opt.optimize)
@@ -519,7 +527,7 @@ void bannrnn_updatenntraining(bannrnn*hlp,bann*net,real err,int seqlen)
 }
 int bannrnn_hprev(bannrnn*hlp,bann*N,int s,int mode)
 {
- if((s>=0)&&(s<hlp->seqlen+1))
+ if(((s+1)>=0)&&((s+1)<=hlp->seqlen+1))
   {
    if(mode==bannrnn_push)    
     memcpy(hlp->hprev+(s+1)*N->rweights[0].ins,N->rweights[0].o,N->rweights[0].ins*sizeof(hlp->hprev[0]));
@@ -620,7 +628,11 @@ real bannrnn_backward(bannrnn*hlp,bann*net,int s,const bann_io*input,const bann_
  real err=0; 
  real*toutput=hlp->outseq+s*net->weights[1].outs;
  real*thidden=hlp->hidseq+s*net->weights[0].outs;
- real*tthidden=hlp->hidseq+((s+1)-1)*net->weights[0].outs;
+ real*tthidden;
+ if(s)
+  tthidden=hlp->hidseq+(s-1)*net->weights[0].outs;
+ else
+  tthidden=hlp->hprev;
  // calc error deltas
  for(c=0;c<net->weights[l].outs;c++)
   {

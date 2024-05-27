@@ -14,7 +14,7 @@
 #define NET_HIDDEN_COUNT 128
 
 #define SEQLEN            25
-#define MAX_EPOCHS        32
+#define MAX_EPOCHS        32 
 
 #define ERRORLEVEL      0.20f
 
@@ -186,7 +186,7 @@ int main()
          trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=ch2id[file[i+s]]; 
          trainO.idx->hotcnt=1;trainO.idx->hotpos[0]=outid;
          // save previous state
-         bannrnn_hprev(&hlp,&N,s,bannrnn_push);
+         // --- bannrnn_hprev(&hlp,&N,s,bannrnn_push);
          // forward
          output=bann_predict(&N,&trainI);
          // save output state
@@ -197,7 +197,7 @@ int main()
           loss+=0.5f*(1-output[outid])*(1-output[outid]);
         }
        // save last hidden output
-       bannrnn_hprev(&hlp,&N,s,bannrnn_push);    
+       bannrnn_hprev(&hlp,&N,seqlen,bannrnn_push);
 
        smoothloss = smoothloss * 0.999f + loss * 0.001f;
 
@@ -211,7 +211,7 @@ int main()
        bannrnn_updatenntraining(&hlp,&N,err,seqlen);
        
        // restore last hidden output
-       bannrnn_hprev(&hlp,&N,s,bannrnn_pull);              
+       bannrnn_hprev(&hlp,&N,seqlen,bannrnn_pull);              
        i+=seqlen;
 
        turn++;
