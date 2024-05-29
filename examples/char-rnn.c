@@ -184,7 +184,7 @@ int main()
          real*output;
          int  outid=ch2id[file[i+s+1]];
          trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=ch2id[file[i+s]]; 
-         trainO.idx->hotcnt=1;trainO.idx->hotpos[0]=outid;
+         trainO.idx->hotcnt=1;trainO.idx->hotpos[0]=outid; 
          // save previous state
          // --- bannrnn_hprev(&hlp,&N,s,bannrnn_push);
          // forward
