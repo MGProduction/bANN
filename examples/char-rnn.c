@@ -1,274 +1,226 @@
+#include <errno.h>
+#include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <float.h>
-#include <assert.h>
 
 #define BANN_IMPLEMENTATION
 #define BANN_RNN
-#define BANN_DEBUG
 #include "bann.h"
 
-#define MAX_CHARS        256
-#define NET_HIDDEN_COUNT 128
+enum { BYTE_VALUES=256, HIDDEN=64, BLOCK=25, GENERATION_LIMIT=64 };
 
-#define SEQLEN            25
-#define MAX_EPOCHS        32 
-
-#define ERRORLEVEL      0.20f
-
-int ch2id[MAX_CHARS];
-int id2ch[MAX_CHARS];
-
-int char_get(const char*sz,int*step)
+static unsigned char *read_text(const char *path,size_t *size)
 {
- if(step) *step=1;
- return (unsigned char)sz[0];
+ FILE *file=fopen(path,"rb");
+ unsigned char *text=NULL;
+ long length;
+ if(!file)
+  return NULL;
+ if(fseek(file,0,SEEK_END)==0 && (length=ftell(file))>0 &&
+    (uintmax_t)length<SIZE_MAX && fseek(file,0,SEEK_SET)==0)
+  {
+   text=(unsigned char*)malloc((size_t)length);
+   if(text && fread(text,1,(size_t)length,file)==(size_t)length)
+    *size=(size_t)length;
+   else
+    {
+     free(text);
+     text=NULL;
+    }
+  }
+ fclose(file);
+ return text;
 }
 
-int bann_gethighestoutput(bann*net)
+static int most_likely(const real *scores,int count)
 {
- int  i,best=-1,hm=net->weights[net->weightscount-1].outs;
- real top,*v=net->weights[net->weightscount-1].o;
- for(i=0;i<hm;i++)
-  if((best==-1)||(v[i]>top))
-  {
+ int i,best=0;
+ for(i=1;i<count;i++)
+  if(scores[i]>scores[best])
    best=i;
-   top=net->weights[net->weightscount-1].o[i];
+ return best;
+}
+
+/* Lowering the temperature sharpens the distribution before sampling. */
+static int sample(const real *scores,int count,real temperature)
+{
+ int i,best=most_likely(scores,count);
+ real weights[BYTE_VALUES+1],sum=0,draw;
+ for(i=0;i<count;i++)
+  {
+   weights[i]=powf(scores[i]/scores[best],1.0f/temperature);
+   sum+=weights[i];
+  }
+ draw=(real)(rand()/(RAND_MAX+1.0))*sum;
+ for(i=0;i<count;i++)
+  {
+   if(draw<weights[i])
+    return i;
+   draw-=weights[i];
   }
  return best;
 }
 
-int createnetfromtextfile(bann*N,const char*file,char**text,size_t*psize,int*pvocabsize)
+static void generate(bann *net,const int *byte_to_id,const unsigned char *id_to_byte,
+                     int boundary,const unsigned char *prompt,real temperature)
 {
- FILE*f=fopen(file,"rb");
- if(f)
- {
-  byte   used[MAX_CHARS]; // one byte for char - change that AND char_get to use utf8
-  size_t size,i,needed,pos;
-  long length;
-  if(fseek(f,0,SEEK_END)!=0 || (length=ftell(f))<2 || fseek(f,0,SEEK_SET)!=0)
-   {
-    fclose(f);
-    return 0;
-   }
-  size=(size_t)length;
-  *text=(char*)malloc(size);
-  if(!*text || fread(*text,1,size,f)!=size)
-   {
-    free(*text);
-    fclose(f);
-    return 0;
-   }
-  (*psize)=size;
-  fclose(f);
+ const real *scores;
+ int step,symbol=boundary;
+ bann_idx indexed={&symbol,1};
+ bann_io input;
+ input.kind=iokind_idx;
+ input.idx=&indexed;
 
-  memset(used,0,sizeof(used));
-
-  needed=i=0;
-  while(i<size)
+ bannrnn_start(NULL,net,1);
+ scores=bann_predict(net,&input);
+ for(;*prompt;prompt++)
   {
-   int a,c=char_get((*text)+i,&a);
-   if(used[c]==0)
-    {
-     used[c]=1;
-     needed++;
-    }
-   i+=a;
-  }  
-  if(pvocabsize) *pvocabsize=(int)needed;
-
-  for(pos=i=0;i<MAX_CHARS;i++)
-   if(used[i])
-    {
-     id2ch[pos]=(int)i;
-     ch2id[i]=(int)pos++;
-    }  
-
-  bann_new(N,needed,NET_HIDDEN_COUNT,1,needed);
-  bann_setlearningrate(N,0.25f,bann_optimizer_off,256);
-  bann_setweightactivation(N,0,bann_activation_tanh);
-  bann_setweightactivation(N,1,bann_activation_softmax);
-  return 1;
- }
- else
-  return 0;
-}
-
-int getnextch(bann*N)
-{
- int op,ix,outputcnt=N->weights[N->weightscount-1].outs;
- real*output=N->weights[N->weightscount-1].o;
- real cdf[MAX_CHARS]; 
- real sum=0.0f,uniform_samples;
- sum=0;
- for(op=0;op<outputcnt;op++)
-  {
-	  sum+=output[op];//softmax[op];
-	  cdf[op]=sum;
-	 }
-	for(op=0;op<outputcnt;op++)
-		cdf[op]/=cdf[outputcnt-1];
-	uniform_samples=(real)rand()/(real)RAND_MAX;
-	//searchsorted
-	ix=0;
-	for(op=outputcnt-1;op>0;op--)
-  {
-		 if(uniform_samples>=cdf[op-1] && uniform_samples<=cdf[op])
-    {
-			  ix=op;
-			  break;
-		  }
-		 }
- return ix;
-}
-
-void generatetext(bann*N,int hm,int e)
-{
- char    output[256];
- int     i,sel,I[2];
- bann_idx idxI;
- bann_io trainI;
- 
- trainI.kind=iokind_idx;trainI.idx=&idxI;trainI.idx->hotpos=&I[0];
- 
- sel=getnextch(N);
- trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=sel;
- i=0;
- output[i++]=id2ch[sel];
- while(i<hm)
-  {
-   // ---bann_setweightactivation(N,1,bann_activation_softmax);
-   bann_predict(N,&trainI);
-   // ---bann_setweightactivation(N,1,bann_activation_sigmoid);
-
-   sel=getnextch(N);
-   trainI.idx->hotpos[0]=sel;
-   output[i++]=id2ch[sel];
+   putchar(*prompt);
+   symbol=byte_to_id[*prompt];
+   scores=bann_predict(net,&input);
   }
- output[i]=0;
- if(e==-1)
-  printf("%s\n",output);
- else
-  printf("%d: %s\n\n",e,output);
+ for(step=0;step<GENERATION_LIMIT;step++)
+  {
+   symbol=temperature>0 ? sample(scores,boundary+1,temperature) : most_likely(scores,boundary+1);
+   if(symbol==boundary)
+    break;
+   putchar(id_to_byte[symbol]);
+   scores=bann_predict(net,&input);
+  }
+ printf("\n  (%s)\n",step==GENERATION_LIMIT ? "generation limit reached" : "learned end of text");
 }
 
-int main(int argc,char**argv)
+int main(int argc,char **argv)
 {
- bann   N; 
- char*  file;
- int    vocab_size;
- size_t i,size;
+ const char *path=argc>1 ? argv[1] : "bin/data/text/test.txt";
+ const unsigned char *prompt=(const unsigned char*)(argc>3 ? argv[3] : "");
+ unsigned char *text,id_to_byte[BYTE_VALUES],seen[BYTE_VALUES]={0};
+ int byte_to_id[BYTE_VALUES],boundary=0,epochs,epoch,i,symbol,label;
+ size_t size,offset,transitions,correct=0;
+ double evaluation_loss=0;
+ bann net;
+ bannrnn sequence;
+ bann_idx input_index={&symbol,1},target_index={&label,1};
+ bann_io input,target;
 
- if(createnetfromtextfile(&N,argc>1 ? argv[1] : "bin/data/text/test.txt",&file,&size,&vocab_size))
+ if(argc>4)
   {
-   int      e,I[2],O[2],good=0,bad=0,sel,turn=0;   
-   real     smoothloss;
-   size_t   seqlen=SEQLEN,s;
-   bann_idx idxI,idxO;
-   bann_io  trainI,trainO; 
-   bannrnn  hlp;
-   trainI.kind=iokind_idx;trainI.idx=&idxI;trainI.idx->hotpos=&I[0];
-   trainO.kind=iokind_idx;trainO.idx=&idxO;trainO.idx->hotpos=&O[0];
-   printf("training...\n");
-   // timed output values
-   bannrnn_new(&hlp,&N,seqlen);
-   if(!hlp.seqlen)
+   fprintf(stderr,"Usage: %s [corpus [epochs [prompt]]]\n",argv[0]);
+   return 1;
+  }
+ text=read_text(path,&size);
+ if(!text)
+  {
+   fprintf(stderr,"Could not read a nonempty corpus from %s.\n",path);
+   return 1;
+  }
+ epochs=size<BLOCK ? 128 : 32;
+ if(argc>2)
+  {
+   char *end;
+   long parsed;
+   errno=0;
+   parsed=strtol(argv[2],&end,10);
+   if(errno || end==argv[2] || *end || parsed<=0 || parsed>INT_MAX)
     {
-     fprintf(stderr,"Could not initialize the recurrent training buffers.\n");
-     bann_delete(&N);
-     free(file);
+     fprintf(stderr,"Epochs must be a positive integer.\n");
+     free(text);
      return 1;
     }
-
-   smoothloss=-logf(1.0f/vocab_size);
-
-   for(e=0;(e<MAX_EPOCHS)&&(smoothloss>ERRORLEVEL);e++)
-    {                    
-     i=0;
-     while(i+1<size)
-      {
-       real loss=0,err=0;
-       seqlen=size-i-1<SEQLEN ? size-i-1 : SEQLEN;
-
-       // forward pass using rnn
-       bannrnn_start(&hlp,&N,(i==0));
-       
-       bannrnn_hprev(&hlp,&N,-1,bannrnn_push);
-       for(s=0;s<seqlen;s++)
-        {
-         real*output;
-         int  outid=ch2id[(unsigned char)file[i+s+1]];
-         trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=ch2id[(unsigned char)file[i+s]];
-         trainO.idx->hotcnt=1;trainO.idx->hotpos[0]=outid; 
-         // save previous state
-         // --- bannrnn_hprev(&hlp,&N,s,bannrnn_push);
-         // forward
-         output=bann_predict(&N,&trainI);
-         // save output state
-         bannrnn_hidout(&hlp,&N,s,bannrnn_push);
-         if((N.weights[1].flags&7)==bann_activation_softmax)
-          loss+=-logf(fmaxf(output[outid],FLT_MIN));
-         else
-          loss+=0.5f*(1-output[outid])*(1-output[outid]);
-        }
-       // save last hidden output
-       bannrnn_hprev(&hlp,&N,SEQLEN,bannrnn_push);
-
-       smoothloss = smoothloss * 0.999f + (loss/seqlen) * 0.001f;
-
-       // backward pass - back propagation thru time 
-       while(s>0)
-        {
-         --s;
-         trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=ch2id[(unsigned char)file[i+s]];
-         trainO.idx->hotcnt=1;trainO.idx->hotpos[0]=ch2id[(unsigned char)file[i+s+1]];
-         err+=bannrnn_backward(&hlp,&N,s,&trainI,&trainO);
-        }
-       bannrnn_updatenntraining(&hlp,&N,err,seqlen);
-       
-       // restore last hidden output
-       bannrnn_hprev(&hlp,&N,SEQLEN,bannrnn_pull);
-       i+=seqlen;
-
-       turn++;
-
-       if((turn&0x7F)==0x7F)
-        {
-         printf("epochs: %d - pos: %zu/%zu - loss: %.2f \r",e,i,size,smoothloss);
-         printf("\ngenerating: ");
-          
-         generatetext(&N,64,-1);
-         bannrnn_hprev(&hlp,&N,SEQLEN,bannrnn_pull);
-        }
-        
-      }
-     printf("\ngenerating: ");
-     generatetext(&N,64,e+1);
-    }
-
-   bannrnn_delete(&hlp);
-
-   printf("check on input text...\n");
-   bannrnn_start(NULL,&N,1);
-   for(i=0;i<size-1;i++)
-    {     
-     trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=ch2id[(unsigned char)file[i]];
-     bann_predict(&N,&trainI);
-     sel=bann_gethighestoutput(&N);
-     if(id2ch[sel]==(unsigned char)file[i+1])
-      good++;
-     else
-      bad++;
-    }
-   printf("generating text...\n");
-   generatetext(&N,64,-1);
-   i=0;
-   bann_delete(&N);
-   free(file);
-   return 0;
+   epochs=(int)parsed;
   }
- fprintf(stderr,"Could not read a training corpus.\n");
- return 1;
+
+ for(offset=0;offset<size;offset++)
+  seen[text[offset]]=1;
+ for(i=0;i<BYTE_VALUES;i++)
+  if(seen[i])
+   {
+    byte_to_id[i]=boundary;
+    id_to_byte[boundary++]=(unsigned char)i;
+   }
+ for(const unsigned char *p=prompt;*p;p++)
+  if(!seen[*p])
+   {
+    fprintf(stderr,"The prompt contains a byte absent from the corpus: 0x%02X.\n",(unsigned)*p);
+    free(text);
+    return 1;
+   }
+
+ input.kind=iokind_idx;
+ input.idx=&input_index;
+ target.kind=iokind_idx;
+ target.idx=&target_index;
+ srand(1);
+ bann_new(&net,boundary+1,HIDDEN,1,boundary+1);
+ bann_setlearningrate(&net,0.05f,bann_optimizer_off,0);
+ bann_setweightactivation(&net,0,bann_activation_tanh);
+ bann_setweightactivation(&net,1,bann_activation_softmax);
+ bannrnn_new(&sequence,&net,BLOCK);
+ if(!sequence.seqlen)
+  {
+   fprintf(stderr,"Could not initialize the recurrent training buffers.\n");
+   bann_delete(&net);
+   free(text);
+   return 1;
+  }
+
+ /* The same boundary symbol opens the stream and marks its end. */
+ transitions=size+1;
+ printf("%zu bytes, %d distinct bytes, %d training epochs.\n",size,boundary,epochs);
+ for(epoch=0;epoch<epochs;epoch++)
+  {
+   double loss=0;
+   for(offset=0;offset<transitions;)
+    {
+     int step,length=transitions-offset<BLOCK ? (int)(transitions-offset) : BLOCK;
+     real error=0;
+     bannrnn_start(&sequence,&net,offset==0);
+     bannrnn_hprev(&sequence,&net,-1,bannrnn_push);
+     for(step=0;step<length;step++)
+      {
+       size_t position=offset+step;
+       symbol=position ? byte_to_id[text[position-1]] : boundary;
+       bann_predict(&net,&input);
+       bannrnn_hidout(&sequence,&net,step,bannrnn_push);
+      }
+     /* Keep the final forward state for the next block. */
+     bannrnn_hprev(&sequence,&net,BLOCK,bannrnn_push);
+     for(step=length-1;step>=0;step--)
+      {
+       size_t position=offset+step;
+       symbol=position ? byte_to_id[text[position-1]] : boundary;
+       label=position<size ? byte_to_id[text[position]] : boundary;
+       error+=bannrnn_backward(&sequence,&net,step,&input,&target);
+      }
+     bannrnn_updatenntraining(&sequence,&net,error,length);
+     bannrnn_hprev(&sequence,&net,BLOCK,bannrnn_pull);
+     loss+=error;
+     offset+=length;
+    }
+   if(epoch==0 || (epoch+1)%8==0 || epoch+1==epochs)
+    printf("Epoch %d/%d: mean training loss %.4f\n",epoch+1,epochs,loss/transitions);
+  }
+ bannrnn_delete(&sequence);
+
+ bannrnn_start(NULL,&net,1);
+ for(offset=0;offset<transitions;offset++)
+  {
+   const real *scores;
+   symbol=offset ? byte_to_id[text[offset-1]] : boundary;
+   label=offset<size ? byte_to_id[text[offset]] : boundary;
+   scores=bann_predict(&net,&input);
+   evaluation_loss-=logf(fmaxf(scores[label],FLT_MIN));
+   correct+=most_likely(scores,boundary+1)==label;
+  }
+ printf("Next-symbol prediction on training text: %zu/%zu correct, mean loss %.4f.\n",
+        correct,transitions,evaluation_loss/transitions);
+ puts("\nGreedy generation:");
+ generate(&net,byte_to_id,id_to_byte,boundary,prompt,0);
+ puts("\nSampled generation (temperature 0.7):");
+ generate(&net,byte_to_id,id_to_byte,boundary,prompt,0.7f);
+
+ bann_delete(&net);
+ free(text);
+ return 0;
 }

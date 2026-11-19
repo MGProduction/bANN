@@ -82,59 +82,65 @@ bANNQ can also run 8-bit recurrent models saved by bANN. Call `bannQ_reset(&NQ)`
 
 In examples folder there are few source files to easily check quality and speed of the little library. 
 
-There you can find:
+Build and run the examples from the repository root so they can find their
+inputs under `bin/data`. The commands below use a C11 compiler. With MSVC,
+use a Developer Command Prompt and the same source file, for example
+`cl /nologo /O2 /std:c11 /I. examples\xor.c`, then run `.\xor.exe`.
 
 ### XOR (xor.c)
 
 Minimal sample to get a XOR behaviour from a **2-2-1** ann. It also used to quantized save, and bANNQ (quantized bANN) for an extra run.
 
-### Sparse text classification (text-classifier.c)
+    cc -std=c11 -O2 -I. examples/xor.c -lm -o xor
+    ./xor
 
-Classifies short messages about cooking, weather, or software. The example
-hashes byte trigrams and sends only occupied bins and their counts via
-`iokind_fidx`. It trains with softmax and cross-entropy on an embedded corpus,
-then compares float and 8-bit predictions on nine held-out messages.
+### MNIST (fashion-mnist.c)
 
-    cc -std=c11 -O2 -I. examples/text-classifier.c -lm -o text-classifier
-    ./text-classifier
+The example trains a **784-64-10** network for **8** epochs. To select MNIST,
+comment out `#define FASHION_TEST` in `examples/fashion-mnist.c` before
+compiling. Put the four uncompressed IDX files in
+[`bin/data/mnist`](bin/data/mnist/README.md).
 
-The example writes `text-classifier.bannQ`. Pass a path as the first argument
-to choose where to save the model.
+    cc -std=c11 -O2 -I. examples/fashion-mnist.c -lm -o mnist
+    ./mnist
 
-### Recurrent memory (rnn-memory.c)
-
-Given a sequence such as `B x y x ?`, the network recalls the first symbol
-when it sees `?`. Only the query has a target. Backpropagation through time
-carries its error across the distractors. The example reports accuracy for
-different delays, including sequences longer than those used in training.
-
-    cc -std=c11 -O2 -I. examples/rnn-memory.c -lm -o rnn-memory
-    ./rnn-memory
-
-### Continuous bag of words (cbow.c)
-
-Predicts a missing word from up to two neighboring words on either side. The
-input is a sparse average of the context words. After training with a linear
-hidden layer and softmax cross-entropy, the example reads the embeddings from
-the first weight matrix and prints the nearest words by cosine similarity.
-It uses a small embedded corpus and a full-vocabulary softmax.
-
-    cc -std=c11 -O2 -I. examples/cbow.c -lm -o cbow
-    ./cbow
-
-### MNIST (fashion-mnist.c) 
-
-It's more or less the "standard" test for anns. Here a **784-48-10** ann reaches around **96.48%** accuracy with **8** epochs, and that's a matter of few minutes.
-
-### FASHION-MNIST (fashion-mnist.c) 
+### FASHION-MNIST (fashion-mnist.c)
 
 A more complex task, still done with a common dataset. Here to get a little more than **87.20%** accuracy you need a **784-96-10** and around **8** epochs.
 
-(same source file - you need to uncomment #define FASHION_TEST to use this instead of mnist)
+Fashion-MNIST is selected by default through `#define FASHION_TEST` in
+`examples/fashion-mnist.c`. Put the four uncompressed IDX files in
+[`bin/data/fashion`](bin/data/fashion/README.md).
+
+    cc -std=c11 -O2 -I. examples/fashion-mnist.c -lm -o fashion-mnist
+    ./fashion-mnist
+
+### CHARACTER-LEVEL RNN (char-rnn.c)
+
+Trains a recurrent network to predict the next byte and learn an end-of-text
+symbol. It reports next-symbol accuracy and loss on the training text,
+then shows greedy and sampled generation from a fresh state. The included
+`bin/data/text/test.txt` is a short memorization exercise.
+
+    cc -std=c11 -O2 -I. examples/char-rnn.c -lm -o char-rnn
+    ./char-rnn
+    ./char-rnn my-corpus.txt 32 "a prefix from the corpus"
+
+The file path, epoch count, and prompt are optional. The default is 128
+epochs for corpora shorter than 25 bytes and 32 otherwise. Generation stops
+at the learned end of text or after 64 new bytes. The prompt must use bytes
+present in the training corpus.
 
 ### TAGGER (tagger.c) 
 
 This is NOT a standard test for ann but a toy project to see how **bann_io** works (and how anns can be used to get THREE - or more - return values).  This example uses **[ConLLU 2003 English dataset](https://www.clips.uantwerpen.be/conll2003/ner/)** to create a minimal **POS/NER tagger**. Code shows how a moving window of context is passed as input, and how three set of data (POS, CHUNK and NER) are retrieved as output.
+
+    cc -std=c11 -O2 -I. examples/tagger.c -lm -o tagger
+    ./tagger
+
+The tagger reads the included `eng.train`, `eng.dev`, and `eng.test` splits
+in `bin/data/ner`. It writes models under `bin` and replaces
+`bin/eng.dev.log` and `bin/eng.test.log` at the final epoch.
 
 Input is **100k** cell wide BUT, using bann_io structure, training (and usage) keeps the average speed not too slow even on a small PC. And saving ann in a quantized way makes also the memory usage relatively small.
 
@@ -205,3 +211,49 @@ Out of curiosity, there are values for test dataset for the other two fields (**
 	I-ADVP	67.91	75.05	62.01	364	121	223
 	I-PRT	70.59	76.60	65.45	72	22	38
 	B-PP	62.50	69.44	56.82	25	11	19
+
+### SPARSE TEXT CLASSIFICATION (text-classifier.c)
+
+Classifies short messages about cooking, weather, or software. The example
+hashes byte trigrams and sends only occupied bins and their counts via
+`iokind_fidx`. It trains with softmax and cross-entropy on an embedded corpus,
+then compares float and 8-bit predictions on nine held-out messages.
+
+    cc -std=c11 -O2 -I. examples/text-classifier.c -lm -o text-classifier
+    ./text-classifier
+
+The example writes `text-classifier.bannQ`. Pass a path as the first argument
+to choose where to save the model.
+
+### RECURRENT MEMORY (rnn-memory.c)
+
+Given a sequence such as `B x y x ?`, the network recalls the first symbol
+when it sees `?`. Only the query has a target. Backpropagation through time
+carries its error across the distractors. The example reports accuracy for
+different delays, including sequences longer than those used in training.
+
+    cc -std=c11 -O2 -I. examples/rnn-memory.c -lm -o rnn-memory
+    ./rnn-memory
+
+### CONTINUOUS BAG OF WORD (cbow.c)
+
+Predicts a missing word from up to two neighboring words on either side. The
+input is a sparse average of the context words. After training with a linear
+hidden layer and softmax cross-entropy, the example reads the embeddings from
+the first weight matrix and prints the nearest words by cosine similarity.
+It uses a small embedded corpus and a full-vocabulary softmax.
+
+    cc -std=c11 -O2 -I. examples/cbow.c -lm -o cbow
+    ./cbow
+
+Pass a plain-text corpus to train on your own data. The optional arguments
+are the vocabulary limit, embedding dimensions, epochs, and query words, in
+that order. File mode defaults to 1,000 words, 32 dimensions, and 10 epochs.
+
+    ./cbow corpus.txt 1000 32 10 orbit planet telescope
+
+File mode keeps the most frequent words that appear at least twice. Context
+windows stop at newlines or ASCII sentence punctuation (`.`, `?`, `!`).
+Tokenization lowercases ASCII and preserves the case of other UTF-8 letters.
+The program reports vocabulary coverage, training loss, CPU time per epoch,
+and up to five cosine neighbors per query.
