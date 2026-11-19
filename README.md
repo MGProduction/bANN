@@ -1,14 +1,14 @@
 # bANN
 
-**bANN** is a header-only C library for playing with neural networks (using the CPU). It's meant to be simple, small, relatively fast, and have few extra features compared to similar minimal libraries. I've made it because I need it for some small **toy projects**, and I've released it under the MIT licence. I don't think YOU may need it (considering), but, well, who knows :-)
+**bANN** is a header-only C library for playing with neural networks (using the CPU). It's meant to be simple, small, relatively fast, and to have few extra features compared to similar minimal libraries. I've made it (in **2024**...) because I needed it for some small **toy projects**, and I've released it now under the MIT licence. I don't think YOU may need it (considering), but, well, who knows :-)
 
-This library is similar to / inspired by other great C libraries, [genann](https://github.com/codeplea/genann) and [tinn](https://github.com/glouw/tinn), certainly more readable, used and tested than mine. 
+This library is similar to / inspired by other great C libraries, [genann](https://github.com/codeplea/genann) and [tinn](https://github.com/glouw/tinn), certainly more readable, used, and tested than mine. 
 
 Like genann, bANN uses cached sigmoids for speed and a single allocation for all weights. 
 
 But it also has a basic optimiser (which makes a big difference in most cases) and the ability to save and work with an 8bit quantized network after training. 
 
-You can save & read the quantized file version with standard bANN (so you're just saving disk space), but you can also play it with bANNQ (a minimal autonomous derived library) that dequantize data on-the-fly, using less memory (the price is of course a bit of speed & quality).
+You can save & read the quantized file version with standard bANN (so you're just saving disk space), but you can also play it with bANNQ (a minimal autonomous derived library) that dequantizes data on-the-fly, using less memory (the price is of course a bit of speed & quality).
 
 Another difference is the fact that **bANN** let you use as input/output an array of active cells - instead of a whole array of values. IMHO, more clear, usable and fast - of course just using CPU only code.
 
@@ -18,13 +18,13 @@ I tried to keep everything very simple:
 
     // declare the network
     bann N;
-	// declare input / output variables
+	// declare input/output variables
 	bann_io in,out;
 	// create it
     bann_new(&N,INPUT_SIZE,HIDDEN_SIZE,HIDDEN_NUMBER,OUTPUT_SIZE);
 	// create in/out vars
 	// these vars have unions - you can use them in a standard way (as usual) OR
-	// with a indexes array - useful when most of input or output are 0s and the few other 1s
+	// with an index array - useful when most of input or output are 0s and the few other 1s
 	in.kind=iokind_standard;
 	in.linear=(real*)malloc(sizeof(in.linear[0])*INPUT_SIZE);
 	out.kind=iokind_standard;
@@ -52,12 +52,12 @@ one-hot target or a distribution over classes. Squared error is the default
 and applies to non-softmax outputs. Set the loss again if you resume training
 from a saved model.
 
-Being a header-only librarey, remember that in your project you need to add 
+Being a header-only library, remember that in your project you need to add 
 
 	#define BANN_IMPLEMENTATION
 	#include "bann.h"
 
-ONCE to compiler also its C code
+Once compiled, it's also its C code
 
 If you just want to use a bANN quantized file (generated with bANN) you can include just this 
 
@@ -80,7 +80,7 @@ bANNQ can also run 8-bit recurrent models saved by bANN. Call `bannQ_reset(&NQ)`
 
 # Examples
 
-In examples folder there are few source files to easily check quality and speed of the little library. 
+In the examples folder, there are a few source files to easily check quality and speed of the little library. 
 
 Build and run the examples from the repository root so they can find their
 inputs under `bin/data`. The commands below use a C11 compiler. With MSVC,
@@ -106,7 +106,7 @@ compiling. Put the four uncompressed IDX files in
 
 ### FASHION-MNIST (fashion-mnist.c)
 
-A more complex task, still done with a common dataset. Here to get a little more than **87.20%** accuracy you need a **784-96-10** and around **8** epochs.
+A more complex task, still done with a common dataset. To get a little more than **87.20%** accuracy you need a **784-96-10** and around **8** epochs.
 
 Fashion-MNIST is selected by default through `#define FASHION_TEST` in
 `examples/fashion-mnist.c`. Put the four uncompressed IDX files in
@@ -235,7 +235,7 @@ different delays, including sequences longer than those used in training.
     cc -std=c11 -O2 -I. examples/rnn-memory.c -lm -o rnn-memory
     ./rnn-memory
 
-### CONTINUOUS BAG OF WORD (cbow.c)
+### CONTINUOUS BAG OF WORDS (cbow.c)
 
 Predicts a missing word from up to two neighboring words on either side. The
 input is a sparse average of the context words. After training with a linear
