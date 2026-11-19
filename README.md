@@ -25,9 +25,9 @@ I tried to keep everything very simple:
 	// create in/out vars
 	// these vars have unions - you can use them in a standard way (as usual) OR
 	// with a indexes array - useful when most of input or output are 0s and the few other 1s
-	in.kind=standard;
+	in.kind=iokind_standard;
 	in.linear=(real*)malloc(sizeof(in.linear[0])*INPUT_SIZE);
-	out.kind=standard;
+	out.kind=iokind_standard;
 	out.linear=(real*)malloc(sizeof(out.linear[0])*OUTPUT_SIZE);
 	// train it
 	...	
@@ -45,6 +45,12 @@ I tried to keep everything very simple:
     bann_delete(&N);
 	
 You can save and read the network using bann_write and bann_read (there's also a bann_corewrite and bann_coreread if you want to stream it inside an opened FILE*)
+
+For single-label classification, set the final layer to `bann_activation_softmax`
+and call `bann_setloss(&N, bann_loss_cross_entropy)` before training. Pass a
+one-hot target or a distribution over classes. Squared error is the default
+and applies to non-softmax outputs. Set the loss again if you resume training
+from a saved model.
 
 Being a header-only librarey, remember that in your project you need to add 
 
@@ -69,7 +75,7 @@ If you just want to use a bANN quantized file (generated with bANN) you can incl
 		bannQ_delete(&NQ); 
 	}
 	
-if bANN code is anyway minimal - bANNQ code is way smaller so you don't have any reason to avoid usign a bit of anns capabilities if you need them
+bANNQ can also run 8-bit recurrent models saved by bANN. Call `bannQ_reset(&NQ)` before predicting a new independent sequence.
 	
 
 # Examples
@@ -81,6 +87,40 @@ There you can find:
 ### XOR (xor.c)
 
 Minimal sample to get a XOR behaviour from a **2-2-1** ann. It also used to quantized save, and bANNQ (quantized bANN) for an extra run.
+
+### Sparse text classification (text-classifier.c)
+
+Classifies short messages about cooking, weather, or software. The example
+hashes byte trigrams and sends only occupied bins and their counts via
+`iokind_fidx`. It trains with softmax and cross-entropy on an embedded corpus,
+then compares float and 8-bit predictions on nine held-out messages.
+
+    cc -std=c11 -O2 -I. examples/text-classifier.c -lm -o text-classifier
+    ./text-classifier
+
+The example writes `text-classifier.bannQ`. Pass a path as the first argument
+to choose where to save the model.
+
+### Recurrent memory (rnn-memory.c)
+
+Given a sequence such as `B x y x ?`, the network recalls the first symbol
+when it sees `?`. Only the query has a target. Backpropagation through time
+carries its error across the distractors. The example reports accuracy for
+different delays, including sequences longer than those used in training.
+
+    cc -std=c11 -O2 -I. examples/rnn-memory.c -lm -o rnn-memory
+    ./rnn-memory
+
+### Continuous bag of words (cbow.c)
+
+Predicts a missing word from up to two neighboring words on either side. The
+input is a sparse average of the context words. After training with a linear
+hidden layer and softmax cross-entropy, the example reads the embeddings from
+the first weight matrix and prints the nearest words by cosine similarity.
+It uses a small embedded corpus and a full-vocabulary softmax.
+
+    cc -std=c11 -O2 -I. examples/cbow.c -lm -o cbow
+    ./cbow
 
 ### MNIST (fashion-mnist.c) 
 

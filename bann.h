@@ -28,6 +28,8 @@
 #ifndef _H_BANN_H
 #define _H_BANN_H
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -87,6 +89,7 @@ typedef struct{
 
  real   errsum,preverrsum;
  int    errcnt,speed;
+ int    loss;
 }bopt;
 
 #if defined(BANN_RNN)
@@ -98,9 +101,10 @@ typedef struct{
  real  *outseq;
  real  *hprev;
  real  *hidseq; 
- int    seqlen;
+  int    seqlen;
+  size_t hiddenstride;
 
- real  *_adagrad[3];				// memory variable for adagrad
+ real **_adagrad;				// memory variable for adagrad
 
 }bannrnn;
 #endif
@@ -140,6 +144,11 @@ void bann_setweightactivation(bann*net,int layernumber,int actmethod);
 
 void bann_setlearningrate(bann*net,real learningrate,int optimizemode,int speed);
 
+#define bann_loss_squared_error 0
+#define bann_loss_cross_entropy 1
+// Cross-entropy applies to softmax outputs. Returns zero for an unknown loss.
+int bann_setloss(bann*net,int loss);
+
 real*bann_predict(bann*net,const bann_io*input);
 real bann_backward(bann*net,const bann_io*input,const bann_io*output);
 real bann_train(bann*net,const bann_io*input,const bann_io*output);
@@ -147,6 +156,7 @@ void bann_optimize(bann*net,real err);
 #if defined(BANN_RNN)
 #define bannrnn_push 1
 #define bannrnn_pull 0
+// A zero seqlen in the helper indicates that initialization failed.
 void bannrnn_new(bannrnn*hlp,bann*net,int seqlen);
 void bannrnn_delete(bannrnn*hlp);
 void bannrnn_start(bannrnn*hlp,bann*net,int first);
@@ -182,6 +192,7 @@ int  bann_read(bann*net,const char*file);
 #include <string.h>
 #include <math.h>
 #include <float.h>
+#include <stdint.h>
 #include <assert.h>
 
 #if defined(BANN_DEBUG)
@@ -268,20 +279,10 @@ real bann_sigmoid_direct(real a)
 {
  return 1.0f / (1.0f + expf(-a));
 }
-real bann_softmax(real a)
+real bann_linear_prime(real f)
 {
- real ret;
- if(a>15)
-  a=15;
- else
- if(a<-15)
-  a=-15;
- ret=expf(a);
- return ret;
-}
-real bann_softmax_prime(real a)
-{
- return a;
+ (void)f;
+ return 1;
 }
 real bann_tanh(real a)
 {
@@ -361,7 +362,7 @@ void bann_enableweightactivation(bann*net,int layernumber)
    break;
   case bann_activation_linear:
    net->weights[layernumber].activation=bann_linear;
-   net->weights[layernumber].prime=bann_linear;
+   net->weights[layernumber].prime=bann_linear_prime;
    break;
   case bann_activation_relu:
    net->weights[layernumber].activation=bann_relu;
@@ -372,8 +373,8 @@ void bann_enableweightactivation(bann*net,int layernumber)
    net->weights[layernumber].prime=bann_tanh_prime;
    break;
    case bann_activation_softmax: 
-    net->weights[layernumber].activation=bann_softmax;
-    net->weights[layernumber].prime=bann_softmax_prime;
+    net->weights[layernumber].activation=bann_linear;
+    net->weights[layernumber].prime=NULL;
     break;
   }
 }
@@ -416,30 +417,58 @@ real*bann_setweighttemp(bann*net,int layernumber,real*ptr)
  return ptr;
 }
 
+static void bann_activation_gradient(const weight*w,real*delta)
+{
+ int c;
+ if((w->flags&7)==bann_activation_softmax)
+  {
+   real dot=0;
+   for(c=0;c<w->outs;c++)
+    dot+=delta[c]*w->o[c];
+   for(c=0;c<w->outs;c++)
+    delta[c]=w->o[c]*(delta[c]-dot);
+  }
+ else
+  for(c=0;c<w->outs;c++)
+   delta[c]*=w->prime(w->o[c]);
+}
+
 #if defined(BANN_RNN)
 void bannrnn_new(bannrnn*hlp,bann*net,int seqlen)
 {
  int i;
  memset(hlp,0,sizeof(bannrnn));
- hlp->outseq=(real*)malloc(net->weights[net->weightscount-1].outs*seqlen*sizeof(hlp->outseq[0]));
- hlp->hidseq=(real*)malloc(net->weights[0].outs*seqlen*sizeof(hlp->hidseq[0]));
- hlp->hprev=(real*)malloc(net->rweights[0].ins*(seqlen+2)*sizeof(hlp->hprev[0]));
- hlp->seqlen=seqlen;
-
- hlp->_weights=(weight*)malloc((net->weightscount+1)*sizeof(weight));
- memset(hlp->_weights,0,(net->weightscount+1)*sizeof(weight));
+ if(seqlen<=0)
+  return;
+ for(i=0;i<net->weightscount-1;i++)
+  hlp->hiddenstride+=net->weights[i].outs;
+ hlp->outseq=(real*)malloc((size_t)net->weights[net->weightscount-1].outs*seqlen*sizeof(real));
+ hlp->hidseq=(real*)malloc((size_t)hlp->hiddenstride*seqlen*sizeof(real));
+ hlp->hprev=(real*)calloc((size_t)net->rweights->ins*((size_t)seqlen+2),sizeof(real));
+ hlp->weightscount=net->weightscount;
+ hlp->_weights=(weight*)calloc(net->weightscount+1,sizeof(weight));
+ hlp->_adagrad=(real**)calloc(net->weightscount+1,sizeof(hlp->_adagrad[0]));
+ if(!hlp->outseq || !hlp->hidseq || !hlp->hprev || !hlp->_weights || !hlp->_adagrad)
+  goto fail;
  for(i=0;i<=net->weightscount;i++)
   {
-   hlp->_adagrad[i]=(real*)malloc((net->weights[i].ins+1)*(net->weights[i].outs+1)*sizeof(hlp->_weights[i].w[0]));
+   hlp->_adagrad[i]=(real*)calloc((size_t)(net->weights[i].ins+1)*net->weights[i].outs,sizeof(real));
    hlp->_weights[i].ins=net->weights[i].ins;
    hlp->_weights[i].outs=net->weights[i].outs;
-   hlp->_weights[i].w=(real*)malloc(net->weights[i].ins*net->weights[i].outs*sizeof(hlp->_weights[i].w[0]));
-   hlp->_weights[i].o=(real*)malloc(net->weights[i].ins*net->weights[i].outs*sizeof(hlp->_weights[i].w[0]));
-   hlp->_weights[i].d=(real*)malloc(net->weights[i].ins*net->weights[i].outs*sizeof(hlp->_weights[i].w[0]));
+   hlp->_weights[i].w=(real*)malloc((size_t)net->weights[i].ins*net->weights[i].outs*sizeof(real));
+   hlp->_weights[i].o=(real*)malloc(net->weights[i].outs*sizeof(real));
+   hlp->_weights[i].d=(real*)malloc(net->weights[i].outs*sizeof(real));
    hlp->_weights[i].bias=(real*)malloc(net->weights[i].outs*sizeof(hlp->_weights[i].bias[0]));   
-  } 
+   if(!hlp->_adagrad[i] || !hlp->_weights[i].w || !hlp->_weights[i].o ||
+      !hlp->_weights[i].d || !hlp->_weights[i].bias)
+    goto fail;
+  }
  hlp->_rweights=&hlp->_weights[net->weightscount]; 
- hlp->weightscount=net->weightscount;
+ hlp->seqlen=seqlen;
+ return;
+
+fail:
+ bannrnn_delete(hlp);
 }
 
 void bannrnn_delete(bannrnn*hlp)
@@ -447,43 +476,49 @@ void bannrnn_delete(bannrnn*hlp)
  int i;
  for(i=0;i<=hlp->weightscount;i++)
   {
-   free(hlp->_adagrad[i]);
-   free(hlp->_weights[i].w);
-   free(hlp->_weights[i].d);
-   free(hlp->_weights[i].o);
-   free(hlp->_weights[i].bias);   
+   if(hlp->_adagrad)
+    free(hlp->_adagrad[i]);
+   if(hlp->_weights)
+    {
+     free(hlp->_weights[i].w);
+     free(hlp->_weights[i].d);
+     free(hlp->_weights[i].o);
+     free(hlp->_weights[i].bias);
+    }
   }
  free(hlp->_weights);
+ free(hlp->_adagrad);
 
  free(hlp->outseq);
  free(hlp->hidseq);
  free(hlp->hprev);
+ memset(hlp,0,sizeof(bannrnn));
 }
 void bannrnn_start(bannrnn*net,bann*N,int first)
 {
  int i;
  if(first)
-  memset(N->weights[net->weightscount].o,0,N->weights[N->weightscount].outs*sizeof(N->weights[N->weightscount].o[0]));
+  memset(N->rweights->o,0,N->rweights->outs*sizeof(real));
  if(net&&net->_weights)
   {
    for(i=0;i<=net->weightscount;i++)
     {     
      memset(net->_weights[i].w,0,net->_weights[i].ins*net->_weights[i].outs*sizeof(net->_weights[i].w[0]));
-     memset(net->_weights[i].o,0,net->_weights[i].ins*net->_weights[i].outs*sizeof(net->_weights[i].w[0]));
-     memset(net->_weights[i].d,0,net->_weights[i].ins*net->_weights[i].outs*sizeof(net->_weights[i].w[0]));
+     memset(net->_weights[i].o,0,net->_weights[i].outs*sizeof(real));
+     memset(net->_weights[i].d,0,net->_weights[i].outs*sizeof(real));
      memset(net->_weights[i].bias,0,net->_weights[i].outs*sizeof(net->_weights[i].bias[0]));     
     }
-   memset(net->_rweights[0].o,0,net->_weights[net->weightscount-1].outs*sizeof(net->_rweights[0].o[0]));
   }
 }
 void bannrnn_updatenntraining(bannrnn*hlp,bann*net,real err,int seqlen)
 {
  int l;
+ if(seqlen<=0 || seqlen>hlp->seqlen)
+  return;
  err/=seqlen;
  for(l=0;l<=net->weightscount;l++)
   {
    int c,r;
-   memset(hlp->_adagrad[l],0,(net->weights[l].ins+1)*(net->weights[l].outs+1)*sizeof(hlp->_adagrad[l][0]));
    for(c=0;c<net->weights[l].outs;c++)
     {
      real val;
@@ -527,12 +562,12 @@ void bannrnn_updatenntraining(bannrnn*hlp,bann*net,real err,int seqlen)
 }
 int bannrnn_hprev(bannrnn*hlp,bann*N,int s,int mode)
 {
- if(((s+1)>=0)&&((s+1)<=hlp->seqlen+1))
+ if(hlp->hprev && s>=-1 && s<=hlp->seqlen)
   {
    if(mode==bannrnn_push)    
     memcpy(hlp->hprev+(s+1)*N->rweights[0].ins,N->rweights[0].o,N->rweights[0].ins*sizeof(hlp->hprev[0]));
    else
-    if(s==hlp->seqlen) // last one should be set as ready to go on
+    if(s==hlp->seqlen) // restore the state for the next prediction
      memcpy(N->rweights[0].o,hlp->hprev+(s+1)*N->rweights[0].ins,N->rweights[0].ins*sizeof(hlp->hprev[0]));
     else // other ones are instead used as BEFORE hidden status
      memcpy(N->rweights[0].d,hlp->hprev+(s+1)*N->rweights[0].ins,N->rweights[0].ins*sizeof(hlp->hprev[0]));
@@ -543,291 +578,127 @@ int bannrnn_hprev(bannrnn*hlp,bann*N,int s,int mode)
 }
 int bannrnn_hidout(bannrnn*hlp,bann*N,int s,int mode)
 {
- if((s>=0)&&(s<hlp->seqlen))
+ int l;
+ real*saved;
+ if(s<0 || s>=hlp->seqlen)
+  return 0;
+ saved=hlp->hidseq+(size_t)s*hlp->hiddenstride;
+ for(l=0;l<N->weightscount;l++)
   {
+   weight*w=&N->weights[l];
+   if(l==N->weightscount-1)
+    saved=hlp->outseq+(size_t)s*w->outs;
    if(mode==bannrnn_push)
+    memcpy(saved,w->o,w->outs*sizeof(real));
+   else
+    memcpy(w->o,saved,w->outs*sizeof(real));
+   saved+=w->outs;
+  }
+ return 1;
+}
+
+real bannrnn_backward(bannrnn*hlp,bann*net,int s,const bann_io*input,const bann_io*output)
+{
+ int c,r,l=net->weightscount-1;
+ real err=0,targetsum=0;
+ weight*w=&net->weights[l];
+ real*delta;
+ const real*previous;
+ int softmax=(w->flags&7)==bann_activation_softmax;
+
+ if(!bannrnn_hidout(hlp,net,s,bannrnn_pull))
+  return 0;
+ delta=hlp->_weights[l].d;
+ previous=s ? hlp->hidseq+(size_t)(s-1)*hlp->hiddenstride : hlp->hprev;
+ memset(delta,0,w->outs*sizeof(real));
+ switch(output->kind)
+  {
+   case iokind_standard:
+    memcpy(delta,output->linear,w->outs*sizeof(real));
+    break;
+   case iokind_idx:
+    for(c=0;c<output->idx->hotcnt;c++)
+     delta[output->idx->hotpos[c]]+=1;
+    break;
+   case iokind_fidx:
+    for(c=0;c<output->fidx->hotcnt;c++)
+     delta[output->fidx->hotpos[c]]+=output->fidx->hotval[c];
+    break;
+  }
+ if(softmax)
+  for(c=0;c<w->outs;c++)
+   targetsum+=delta[c];
+ for(c=0;c<w->outs;c++)
+  {
+   if(softmax)
     {
-     memcpy(hlp->hidseq+s*N->weights[0].outs,N->weights[0].o,N->weights[0].outs*sizeof(hlp->outseq[0]));         
-     memcpy(hlp->outseq+s*N->weights[1].outs,N->weights[1].o,N->weights[1].outs*sizeof(hlp->hidseq[0]));                  
+     err-=delta[c]*logf(fmaxf(w->o[c],FLT_MIN));
+     delta[c]=targetsum*w->o[c]-delta[c];
     }
    else
     {
-     memcpy(N->weights[0].o,hlp->hidseq+s*N->weights[0].outs,N->weights[0].outs*sizeof(hlp->outseq[0]));         
-     memcpy(N->weights[1].o,hlp->outseq+s*N->weights[1].outs,N->weights[1].outs*sizeof(hlp->hidseq[0]));                  
-    }
-   return 1;
-  }
- else
-  return 0;
-}
-real bannrnn_backward(bannrnn*hlp,bann*net,int s,const bann_io*input,const bann_io*output)
-{
- /*
- {
-    for(op = 0; op < nOutputNodes; op++){
-      dy[op][0] = ps[op][t];
-    }
-    dy[targets[t]][0] -= 1;
-
-    // calculate delwhy = (vocab_sizex1)x(nHiddenNodesx1)T
-		// =(vocab_size x 1)x(1 x nHiddenNodes)= (vocab_size x nHiddenNodes)
-    for(op = 0; op < nOutputNodes; op++){
-      for(hi = 0; hi < nHiddenNodes; hi++){
-        delwhy[op][hi] += dy[op][0]*hs[hi][t];
-      }
-      delwhy[op][nHiddenNodes] += dy[op][0];  // derivative of output bias
-    }
-
-    // backprop into h
-    // dh = (vocab_size x nHiddenNodes)T x (vocab_size x 1)
-		// = (nHiddenNodes x vocab_size)x(vocab_size x 1)
-		// = (nHiddenNodes x 1)
-    for(hi = 0; hi < nHiddenNodes; hi++){
-      sum =0;
-      for(op = 0; op < nOutputNodes; op++){
-          sum += W_hidden_output[op][hi]*dy[op][0];
-      }
-      dh[hi][0] = sum + dhnext[hi][0];
-    }
-
-    //backprop through tanh nonlinearity
-    for(hi = 0; hi <nHiddenNodes; hi++){
-      dhraw[hi][0] = (1 - hs[hi][t]*hs[hi][t]) * dh[hi][0];
-      delwhh[hi][nHiddenNodes] += dhraw[hi][0];
-    }
-    // delwxh = (nHiddenNodes x 1)x(vocab_size x 1)T
-		// =(nHiddenNodes x 1)x(1x vocab_size )= (nHiddenNodes x vocab_size)
-    // delwhh = (nHiddenNodes x 1)x(nHiddenNodes x 1)T
-		// =(nHiddenNodes x1)x(1x nHiddenNodes)
-		// = (nHiddenNodes x nHiddenNodes)
-    // dhnext = (nHiddenNodes x nHiddenNodes)T x(nHiddenNodes x1)
-		// = (nHiddenNodesx1)
-    for(hi = 0; hi < nHiddenNodes; hi++){
-      for(in = 0; in < nInputNodes; in++){
-        delwxh[hi][in] += dhraw[hi][0]*xs[in][t];
-      }
-      if(t==0){
-        for(op = 0; op < nHiddenNodes; op++){
-          delwhh[hi][op] += dhraw[hi][0]* hprev[op][0];
-        }
-      }
-      else{
-        for(op = 0; op < nHiddenNodes; op++){
-          delwhh[hi][op] += dhraw[hi][0]* hs[op][t-1];
-        }
-      }
-      sum = 0;
-      for(op = 0; op < nHiddenNodes; op++){
-        sum += W_hidden_hidden[op][hi]*dhraw[op][0];
-      }
-      dhnext[hi][0]=sum;
+     delta[c]=w->o[c]-delta[c];
+     err+=0.5f*delta[c]*delta[c];
     }
   }
- */
- int  c,r,l=net->weightscount-1,h=0,odd=0;
- real err=0; 
- real*toutput=hlp->outseq+s*net->weights[1].outs;
- real*thidden=hlp->hidseq+s*net->weights[0].outs;
- real*tthidden;
- if(s)
-  tthidden=hlp->hidseq+(s-1)*net->weights[0].outs;
- else
-  tthidden=hlp->hprev;
- // calc error deltas
- for(c=0;c<net->weights[l].outs;c++)
+ if(!softmax)
+  bann_activation_gradient(w,delta);
+
+ for(;l>=0;l--)
   {
-   real error,val=0;
-   switch(output->kind)
+   weight*g=&hlp->_weights[l];
+   w=&net->weights[l];
+   for(c=0;c<w->outs;c++)
     {
-     case iokind_standard:
-      val=output->linear[c];
-     break;
-     case iokind_idx:
-      if((h<output->idx->hotcnt)&&(c==output->idx->hotpos[h]))
-       {
-        val=1;
-        h++;
-       }
-      break;
-     case iokind_fidx:
-      if((h<output->fidx->hotcnt)&&(c==output->fidx->hotpos[h]))
-       {
-        val=output->fidx->hotval[h];
-        h++;
-       }
-      break;
-    }  
-
-   /*
-   for(op = 0; op < nOutputNodes; op++){
-      for(hi = 0; hi < nHiddenNodes; hi++){
-        delwhy[op][hi] += dy[op][0]*hs[hi][t];
-      }
-      delwhy[op][nHiddenNodes] += dy[op][0];  // derivative of output bias
-    }
-   */
-   toutput[c]-=val;
-   error=toutput[c];
-   for(r=0;r<net->weights[l].ins;r++)
-    //hlp->delwhy
-    hlp->_weights[1].w[c*net->weights[l].ins+r]+=error*thidden[r];
-
-   // manca il bias
-   hlp->_weights[1].bias[c]+=error;
-
-   err+=0.5f*error*error;   
-  }
-
- /*
- for(hi = 0; hi < nHiddenNodes; hi++){
-      sum =0;
-      for(op = 0; op < nOutputNodes; op++){
-          sum += W_hidden_output[op][hi]*dy[op][0];
-      }
-      dh[hi][0] = sum + dhnext[hi][0];
-    }
- */
- {
- for(r=0;r<net->weights[l].ins;r++)
-  {
-   real sum=0;
-   for(c=0;c<net->weights[l].outs;c++)
-    sum+=net->weights[l].w[c*net->weights[l].ins+r]*toutput[c];
-   //hlp->dh[
-   hlp->_weights[0].d[r]=sum+hlp->_rweights[0].o[r];//hlp->dhnext[r];
-  }
- }
-
-  /*
-  for(hi = 0; hi <nHiddenNodes; hi++){
-      dhraw[hi][0] = (1 - hs[hi][t]*hs[hi][t]) * dh[hi][0];
-      delwhh[hi][nHiddenNodes] += dhraw[hi][0];
-    }
-  */
-  for(r=0;r<net->weights[l].ins;r++)
-  {
-    //hlp->dhraw[
-    hlp->_rweights[0].d[r] = (1 - thidden[r]*thidden[r]) * hlp->_weights[0].d[r];//hlp->dh[r];
-    //hlp->delwhh
-    hlp->_rweights[0].bias[r] += hlp->_rweights[0].d[r];//hlp->dhraw[r];
-  }
-
-  for(r=0;r<net->weights[0].outs;r++)
-   {
-    int  cc;
-    /*
-    for(in = 0; in < nInputNodes; in++){
-     delwxh[hi][in] += dhraw[hi][0]*xs[in][t];
-    */
-    for(cc=0;cc<input->idx->hotcnt;cc++)
-     {      
-      int c=input->idx->hotpos[cc];
-      hlp->_weights[0].w[r*net->weights[0].ins+c] += hlp->_rweights[0].d[r];
-     }
-   }
-  for(r=0;r<net->rweights[0].outs;r++)
-   {
-    real sum=0;
-    /*
-    for(op = 0; op < nHiddenNodes; op++){
-          delwhh[hi][op] += dhraw[hi][0]* hs[op][t-1];
-    */ 
-    for(c=0;c<net->rweights[0].ins;c++)
-     {
-      hlp->_rweights[0].w[r*net->rweights[0].ins+c] += hlp->_rweights[0].d[r] * tthidden[c];
-      if(hlp->_rweights[0].w[r*net->rweights[0].ins+c]>10)
-       odd++;
-     }    
-    /*
-    sum = 0;
-    for(op = 0; op < nHiddenNodes; op++){
-      sum += W_hidden_hidden[op][hi]*dhraw[op][0];
-    }
-    dhnext[hi][0]=sum;
-    */
-    sum=0;
-    for(c=0;c<net->rweights[0].ins;c++)
-     sum += net->rweights[0].w[c*net->rweights[0].ins+r]*hlp->_rweights[0].d[c];//hlp->dhraw[c];
-    //hlp->dhnext[r]=sum;
-    hlp->_rweights[0].o[r]=sum;
-    if(sum>4)
-     odd++;
-  }
-
-/*
- for(;l>0;l--)
-  for(r=0;r<net->weights[l].ins;r++)
-   {
-    real delta=0;
-    for(c=0;c<net->weights[l].outs;c++)
-     delta += nn_getdelta(net,l,c) * nn_getweight(net,l,r,c);
-    delta*=net->weights[l].prime(nn_getoutput(net,l-1,r));
-    sanitycheck(delta);
-    nn_setdelta(net,l-1,r,delta);
-   }
- // backpropagation
- for(l=0;l<net->weightscount;l++)
-  {
-   for(c=0;c<net->weights[l].outs;c++)
-    {
-     real delta=net->weights[l].d[c];
-     hlp->_weights[l].bias[c]-=delta;
-     sanitycheck(hlp->_weights[l].bias[c]);
-     bann_protectbias(hlp->_weights[l].bias[c]);
-     if(l==0)
-     {
+     real*gradient=g->w+(size_t)c*w->ins;
+     g->bias[c]+=g->d[c];
+     if(l)
+      for(r=0;r<w->ins;r++)
+       gradient[r]+=g->d[c]*net->weights[l-1].o[r];
+     else
       switch(input->kind)
        {
-        case standard:
-         for(r=0;r<net->weights[l].ins;r++)
-          {
-           hlp->_weights[l].w[c*net->weights[l].ins+r]+=delta*input->linear[r];
-           sanitycheck(hlp->_weights[l].w[c*net->weights[l].ins+r]);
-           bann_protect(hlp->_weights[l].w[c*net->weights[l].ins+r]);
-          }
+        case iokind_standard:
+         for(r=0;r<w->ins;r++)
+          gradient[r]+=g->d[c]*input->linear[r];
          break;
-        case idx:
+        case iokind_idx:
          for(r=0;r<input->idx->hotcnt;r++)
-          {      
-           int rr=input->idx->hotpos[r];
-           hlp->_weights[l].w[c*net->weights[l].ins+rr]+=delta;
-           sanitycheck(hlp->_weights[l].w[c*net->weights[l].ins+rr]);
-           bann_protect(hlp->_weights[l].w[c*net->weights[l].ins+rr]);
-          }
+          gradient[input->idx->hotpos[r]]+=g->d[c];
          break;
-        case fidx:
+        case iokind_fidx:
          for(r=0;r<input->fidx->hotcnt;r++)
-          {      
-           int rr=input->fidx->hotpos[r];
-           hlp->_weights[l].w[c*net->weights[l].ins+rr]+=delta*input->fidx->hotval[r];
-           sanitycheck(hlp->_weights[l].w[c*net->weights[l].ins+rr]);
-           bann_protect(hlp->_weights[l].w[c*net->weights[l].ins+rr]);
-          }
+          gradient[input->fidx->hotpos[r]]+=g->d[c]*input->fidx->hotval[r];
          break;
        }
-      {
-       real sum=0;
-       for(r=0;r<net->rweights[0].ins;r++)
-        {
-         hlp->_rweights[0].w[c*net->rweights[0].ins+r]+=delta*net->rweights[0].d[r];
-         sanitycheck(hlp->_rweights[0].w[c*net->rweights[0].ins+r]);
-         bann_protect(hlp->_rweights[0].w[c*net->rweights[0].ins+r]);
-         sum+=hlp->_rweights[0].w[c*net->rweights[0].ins+r]*delta;
-        }
-       hlp->_rweights[0].o[c]=sum;
-      }
-     }
-     else
-      {
-       for(r=0;r<net->weights[l].ins;r++)
-       {
-        hlp->_weights[l].w[c*net->weights[l].ins+r]+=delta*net->weights[l-1].o[r];
-        sanitycheck(hlp->_weights[l].w[c*net->weights[l].ins+r]);
-        bann_protect(hlp->_weights[l].w[c*net->weights[l].ins+r]);
-       }
-      }
     }
-  }*/
+   if(l)
+    {
+     real*prior=hlp->_weights[l-1].d;
+     for(r=0;r<w->ins;r++)
+      {
+       prior[r]=l==1 ? hlp->_rweights->o[r] : 0;
+       for(c=0;c<w->outs;c++)
+        prior[r]+=w->w[c*w->ins+r]*g->d[c];
+      }
+     bann_activation_gradient(&net->weights[l-1],prior);
+    }
+  }
+ w=net->rweights;
+ delta=hlp->_weights[0].d;
+ for(c=0;c<w->outs;c++)
+  {
+   hlp->_rweights->bias[c]+=delta[c];
+   for(r=0;r<w->ins;r++)
+    hlp->_rweights->w[c*w->ins+r]+=delta[c]*previous[r];
+  }
+ for(r=0;r<w->ins;r++)
+  {
+   real sum=0;
+   for(c=0;c<w->outs;c++)
+    sum+=w->w[c*w->ins+r]*delta[c];
+   hlp->_rweights->o[r]=sum;
+  }
  return err;
 }
 #endif
@@ -862,12 +733,15 @@ void bann_new(bann*net,int input,int hidden,int hiddencount,int output)
  for(h=0;h<net->weightscount-2;h++)
   ptr=bann_setweight(net,l++,hidden,hidden,ptr,bann_activation_sigmoid,1);
  ptr=bann_setweight(net,l++,hidden,output,ptr,bann_activation_sigmoid,1);
- // set weight input and delta memory
+#if defined(BANN_RNN)
+ ptr=bann_setweight(net,l,hidden,hidden,ptr,bann_activation_sigmoid,1);
+#endif
+ // set weight output and delta memory
  for(l=0;l<net->weightscount;l++)
   ptr=bann_setweighttemp(net,l,ptr);
 #if defined(BANN_RNN)
- ptr=bann_setweight(net,l,hidden,hidden,ptr,bann_activation_sigmoid,1); 
  ptr=bann_setweighttemp(net,l,ptr);
+ memset(net->rweights->o,0,hidden*sizeof(real));
 #endif
  assert((ptr-net->linear)==net->linearsize);
  // set learning rate in auto adjust mode
@@ -927,7 +801,7 @@ real*bann_predict(bann*net,const bann_io*input)
         sum+=net->weights[l-1].o[j]*nn_getweight(net,l,j,i);
       }
      sanitycheck(sum);
-     nn_setoutput(net,l,i,net->weights[l].activation(sum));     
+     nn_setoutput(net,l,i,net->weights[l].activation(sum));
      sanitycheck(net->weights[l].o[i]);
      if((net->weights[l].o[i]==1.0f)||(net->weights[l].o[i]==-1.0f))
       clipped++;
@@ -935,6 +809,12 @@ real*bann_predict(bann*net,const bann_io*input)
    if((net->weights[l].flags&7)==bann_activation_softmax)
     {
      real sum=0;
+     real max=net->weights[l].o[0];
+     for(i=1;i<net->weights[l].outs;i++)
+      if(net->weights[l].o[i]>max)
+       max=net->weights[l].o[i];
+     for(i=0;i<net->weights[l].outs;i++)
+      net->weights[l].o[i]=expf(net->weights[l].o[i]-max);
      for(i=0;i<net->weights[l].outs;i++)
       sum+=net->weights[l].o[i];
      if(sum==0)
@@ -964,6 +844,14 @@ void bann_setlearningrate(bann*net,real learningrate,int optimizemode,int speed)
  net->opt.learningrate=learningrate;
  net->opt.optimize=optimizemode;
  net->opt.speed=speed;
+}
+
+int bann_setloss(bann*net,int loss)
+{
+ if(loss!=bann_loss_squared_error && loss!=bann_loss_cross_entropy)
+  return 0;
+ net->opt.loss=loss;
+ return 1;
 }
 
 void bann_optimize(bann*net,real err)
@@ -1047,48 +935,60 @@ void bann_optimize(bann*net,real err)
 // bann training
 real bann_backward(bann*net,const bann_io*input,const bann_io*output)
 {
- int  c,r,l=net->weightscount-1,h=0;
- real learningrate=net->opt.learningrate,err=0,bdelta=0; 
- // calc error deltas
- for(c=0;c<net->weights[l].outs;c++)
+ int  c,r,l=net->weightscount-1;
+ real learningrate=net->opt.learningrate,err=0;
+ int cross_entropy=net->opt.loss==bann_loss_cross_entropy &&
+                   (net->weights[l].flags&7)==bann_activation_softmax;
+ // Store target values, then transform the output errors into logit deltas.
+ memset(net->weights[l].d,0,net->weights[l].outs*sizeof(real));
+ switch(output->kind)
   {
-   real error,derror,val=0;
-   switch(output->kind)
+   case iokind_standard:
+    memcpy(net->weights[l].d,output->linear,net->weights[l].outs*sizeof(real));
+    break;
+   case iokind_idx:
+    for(c=0;c<output->idx->hotcnt;c++)
+     net->weights[l].d[output->idx->hotpos[c]]=1;
+    break;
+   case iokind_fidx:
+    for(c=0;c<output->fidx->hotcnt;c++)
+     net->weights[l].d[output->fidx->hotpos[c]]+=output->fidx->hotval[c];
+    break;
+  }
+ if(cross_entropy)
+  {
+   real targetsum=0;
+   for(c=0;c<net->weights[l].outs;c++)
+    targetsum+=net->weights[l].d[c];
+   for(c=0;c<net->weights[l].outs;c++)
     {
-     case iokind_standard:
-      val=output->linear[c];
-     break;
-     case iokind_idx:
-      if((h<output->idx->hotcnt)&&(c==output->idx->hotpos[h]))
-       {
-        val=1;
-        h++;
-       }
-      break;
-     case iokind_fidx:
-      if((h<output->fidx->hotcnt)&&(c==output->fidx->hotpos[h]))
-       {
-        val=output->fidx->hotval[h];
-        h++;
-       }
-      break;
-    }  
-   error=(val-net->weights[l].o[c]);
-   derror=error * net->weights[l].prime(net->weights[l].o[c]);
-   sanitycheck(derror);
-   nn_setdelta(net,l,c,derror);
-   err+=0.5f*error*error;   
+     real target=net->weights[l].d[c],probability=net->weights[l].o[c];
+     err-=target*logf(fmaxf(probability,FLT_MIN));
+     nn_setdelta(net,l,c,target-targetsum*probability);
+    }
+  }
+ else
+  {
+   for(c=0;c<net->weights[l].outs;c++)
+    {
+     real error=net->weights[l].d[c]-net->weights[l].o[c];
+     nn_setdelta(net,l,c,error);
+     err+=0.5f*error*error;
+    }
+   bann_activation_gradient(&net->weights[l],net->weights[l].d);
   }
  for(;l>0;l--)
-  for(r=0;r<net->weights[l].ins;r++)
-   {
-    real delta=0;
-    for(c=0;c<net->weights[l].outs;c++)
-     delta += nn_getdelta(net,l,c) * nn_getweight(net,l,r,c);
-    delta*=net->weights[l].prime(nn_getoutput(net,l-1,r));
-    sanitycheck(delta);
-    nn_setdelta(net,l-1,r,delta);
-   }
+  {
+   for(r=0;r<net->weights[l].ins;r++)
+    {
+     real delta=0;
+     for(c=0;c<net->weights[l].outs;c++)
+      delta+=nn_getdelta(net,l,c)*nn_getweight(net,l,r,c);
+     sanitycheck(delta);
+     nn_setdelta(net,l-1,r,delta);
+    }
+   bann_activation_gradient(&net->weights[l-1],net->weights[l-1].d);
+  }
  // backpropagation
  for(l=0;l<net->weightscount;l++)
   {
@@ -1130,6 +1030,8 @@ real bann_backward(bann*net,const bann_io*input,const bann_io*output)
          break;
        }
 #if defined(BANN_RNN)
+      net->rweights->bias[c]-=delta*learningrate;
+      bann_protectbias(net->rweights->bias[c]);
       for(r=0;r<net->rweights[0].ins;r++)
        {
         net->rweights[0].w[c*net->rweights[0].ins+r]+=delta*learningrate*net->rweights[0].d[r];
@@ -1168,128 +1070,165 @@ void bann_delete(bann*net)
  free(net->linear);
 }
 
-// bann write
-int  bann_corewrite(bann*net,FILE*f,int way)
+// Version 2 includes the recurrent matrix as the final stored layer.
+#if defined(BANN_RNN)
+#define BANN_FILE_VERSION 2
+#define BANN_RECURRENT_LAYERS 1
+#else
+#define BANN_FILE_VERSION 1
+#define BANN_RECURRENT_LAYERS 0
+#endif
+
+int bann_corewrite(bann*net,FILE*f,int way)
 {
- int version=1,i,usedlinearsize=0;
-  
- fwrite("BANN",4,1,f);
- fwrite(&version,sizeof(version),1,f);   
- 
- fwrite(&way,sizeof(way),1,f);
-  
- // linear size is the ALLOC size
- fwrite(&net->linearsize,sizeof(net->linearsize),1,f);  
- // but we want usedlinearsize that counts just real weights - not also outputs/delta
- for(i=0;i<net->weightscount;i++)
+ int version=BANN_FILE_VERSION,i,usedlinearsize=0;
+ int layercount=net->weightscount+BANN_RECURRENT_LAYERS;
+
+ for(i=0;i<layercount;i++)
   usedlinearsize+=(net->weights[i].ins+1)*net->weights[i].outs;
- fwrite(&usedlinearsize,sizeof(usedlinearsize),1,f);  
+ if((way!=bann_float && way!=bann_8bit) ||
+    fwrite("BANN",4,1,f)!=1 ||
+    fwrite(&version,sizeof(version),1,f)!=1 ||
+    fwrite(&way,sizeof(way),1,f)!=1 ||
+    fwrite(&net->linearsize,sizeof(net->linearsize),1,f)!=1 ||
+    fwrite(&usedlinearsize,sizeof(usedlinearsize),1,f)!=1)
+  return 0;
 
  if(way==bann_8bit)
   {
-   int  i;
-   byte*blinear=(byte*)malloc(usedlinearsize);
-   real maxf,minf,scale;
-   maxf=minf=net->linear[0];
+   real maxf=net->linear[0],minf=maxf,scale;
    for(i=1;i<usedlinearsize;i++)
     {
-     if(net->linear[i]>maxf)      maxf=net->linear[i];
-     if(net->linear[i]<minf)      minf=net->linear[i];
+     if(net->linear[i]>maxf) maxf=net->linear[i];
+     if(net->linear[i]<minf) minf=net->linear[i];
     }
    scale=(maxf-minf)/255;
+   if(!isfinite(scale) ||
+      fwrite(&minf,sizeof(minf),1,f)!=1 ||
+      fwrite(&scale,sizeof(scale),1,f)!=1)
+    return 0;
    for(i=0;i<usedlinearsize;i++)
     {
-     byte id=(byte)floor(0.5f+(net->linear[i]-minf)/(maxf-minf)*255);
-     blinear[i]=id;
-    }     
-   fwrite(&minf,sizeof(minf),1,f);fwrite(&scale,sizeof(scale),1,f);
-   fwrite(blinear,sizeof(blinear[0]),usedlinearsize,f);
-   free(blinear);
+     if(!isfinite(net->linear[i]) ||
+        fputc(scale ? (int)floor(0.5+(net->linear[i]-minf)/(double)(maxf-minf)*255) : 0,f)==EOF)
+      return 0;
+    }
   }
- else
-  {
-   fwrite(net->linear,sizeof(net->linear[0]),usedlinearsize,f);
-   fwrite(&net->opt.optimize,sizeof(net->opt.optimize),1,f);
-   fwrite(&net->opt.learningrate,sizeof(net->opt.learningrate),1,f);    
-  }
+ else if(fwrite(net->linear,sizeof(real),usedlinearsize,f)!=(size_t)usedlinearsize ||
+         fwrite(&net->opt.optimize,sizeof(net->opt.optimize),1,f)!=1 ||
+         fwrite(&net->opt.learningrate,sizeof(net->opt.learningrate),1,f)!=1)
+  return 0;
 
- fwrite(&net->weightscount,sizeof(net->weightscount),1,f);
- for(i=0;i<net->weightscount;i++)
+ if(fwrite(&layercount,sizeof(layercount),1,f)!=1)
+  return 0;
+ for(i=0;i<layercount;i++)
   {
-   fwrite(&net->weights[i].ins,sizeof(net->weights[i].ins),1,f);
-   fwrite(&net->weights[i].outs,sizeof(net->weights[i].outs),1,f);
-   fwrite(&net->weights[i].flags,sizeof(net->weights[i].flags),1,f);
+   weight*w=&net->weights[i];
+   if(fwrite(&w->ins,sizeof(w->ins),1,f)!=1 ||
+      fwrite(&w->outs,sizeof(w->outs),1,f)!=1 ||
+      fwrite(&w->flags,sizeof(w->flags),1,f)!=1)
+    return 0;
   }
  return 1;
 }
-int  bann_write(bann*net,const char*file,int way)
+
+int bann_write(bann*net,const char*file,int way)
 {
  FILE*f=fopen(file,"wb");
- if(f)
-  {
-   bann_corewrite(net,f,way);
-   fclose(f);   
-   return 1;
-  }
- else
+ int ok;
+ if(!f)
   return 0;
+ ok=bann_corewrite(net,f,way);
+ return fclose(f)==0 && ok;
 }
 
-// bann read
-int  bann_coreread(bann*net,FILE*f)
+int bann_coreread(bann*net,FILE*f)
 {
- int  version,i,ret=0,way;
+ bann loaded={0};
+ int version,i,way,usedlinearsize,layercount;
+ uint64_t used=0,total=0;
  char magic[4];
- if((fread(magic,4,1,f)==1)&&(fread(&version,sizeof(version),1,f)==1)&&(memcmp(magic,"BANN",4)==0)&&(version==1))
+
+ if(fread(magic,4,1,f)!=1 || memcmp(magic,"BANN",4)!=0 ||
+    fread(&version,sizeof(version),1,f)!=1 || version!=BANN_FILE_VERSION ||
+    fread(&way,sizeof(way),1,f)!=1 || (way!=bann_float && way!=bann_8bit) ||
+    fread(&loaded.linearsize,sizeof(loaded.linearsize),1,f)!=1 ||
+    fread(&usedlinearsize,sizeof(usedlinearsize),1,f)!=1 ||
+    usedlinearsize<=0 || loaded.linearsize<usedlinearsize ||
+    (size_t)loaded.linearsize>SIZE_MAX/sizeof(real))
+  return 0;
+ loaded.linear=(real*)malloc((size_t)loaded.linearsize*sizeof(real));
+ if(!loaded.linear)
+  return 0;
+
+ if(way==bann_8bit)
   {
-   real*ptr;
-   int  usedlinearsize;
-   memset(net,0,sizeof(bann));
-
-   fread(&way,sizeof(way),1,f);
-     
-   // read net data
-   fread(&net->linearsize,sizeof(net->linearsize),1,f);
-   fread(&usedlinearsize,sizeof(usedlinearsize),1,f);
-   ptr=net->linear=(real*)malloc( net->linearsize * sizeof(net->linear[0]) );   
-   
-   if(way==bann_8bit)
+   real base,scale;
+   if(fread(&base,sizeof(base),1,f)!=1 || fread(&scale,sizeof(scale),1,f)!=1 ||
+      !isfinite(base) || !isfinite(scale) || scale<0)
+    goto fail;
+   for(i=0;i<usedlinearsize;i++)
     {
-     int  i;
-     byte*blinear=(byte*)malloc(usedlinearsize);
-     real base,scale;
-     fread(&base,sizeof(base),1,f);fwrite(&scale,sizeof(scale),1,f);
-     fread(blinear,sizeof(blinear[0]),usedlinearsize,f);
-     for(i=0;i<usedlinearsize;i++)
-      net->linear[i]=base+blinear[i]*scale;
-     free(blinear);
+     int value=fgetc(f);
+     if(value==EOF)
+      goto fail;
+     loaded.linear[i]=base+value*scale;
     }
-   else
-    {
-     fread(net->linear,sizeof(net->linear[0]),usedlinearsize,f);     
-     fread(&net->opt.optimize,sizeof(net->opt.optimize),1,f);
-     fread(&net->opt.learningrate,sizeof(net->opt.learningrate),1,f);
-    }
-   // read net weight structure and fill it
-   fread(&net->weightscount,sizeof(net->weightscount),1,f);          
-   net->weights=(weight*)malloc( net->weightscount * sizeof(net->weights[0]) );
-   for(i=0;i<net->weightscount;i++)
-    {
-     int ins,outs,flags;
-     fread(&ins,sizeof(ins),1,f);
-     fread(&outs,sizeof(outs),1,f);
-     fread(&flags,sizeof(flags),1,f);
-     ptr=bann_setweight(net,i,ins,outs,ptr,flags,0);
-    }
-    // set weight input and delta memory
-   for(i=0;i<net->weightscount;i++)
-    ptr=bann_setweighttemp(net,i,ptr);
-
-   // build sigmoid table
-   bann_buildsigmoidcache();
-   ret=1;
   }
- return ret;
+ else if(fread(loaded.linear,sizeof(real),usedlinearsize,f)!=(size_t)usedlinearsize ||
+         fread(&loaded.opt.optimize,sizeof(loaded.opt.optimize),1,f)!=1 ||
+         fread(&loaded.opt.learningrate,sizeof(loaded.opt.learningrate),1,f)!=1)
+  goto fail;
+
+ if(fread(&layercount,sizeof(layercount),1,f)!=1 ||
+    layercount<2+BANN_RECURRENT_LAYERS || layercount>usedlinearsize ||
+    (size_t)layercount>SIZE_MAX/sizeof(weight))
+  goto fail;
+ loaded.weightscount=layercount-BANN_RECURRENT_LAYERS;
+ loaded.weights=(weight*)malloc((size_t)layercount*sizeof(weight));
+ if(!loaded.weights)
+  goto fail;
+
+ for(i=0;i<layercount;i++)
+  {
+   int ins,outs,flags;
+   uint64_t count;
+   if(fread(&ins,sizeof(ins),1,f)!=1 || fread(&outs,sizeof(outs),1,f)!=1 ||
+      fread(&flags,sizeof(flags),1,f)!=1 || ins<=0 || outs<=0 ||
+      (flags&7)>bann_activation_softmax)
+    goto fail;
+   if(i && i<loaded.weightscount && loaded.weights[i-1].outs!=ins)
+    goto fail;
+#if defined(BANN_RNN)
+   if(i==loaded.weightscount && (ins!=loaded.weights[0].outs || outs!=ins))
+    goto fail;
+#endif
+   count=((uint64_t)ins+1)*outs;
+   if(used+count>(uint64_t)usedlinearsize ||
+      total+count+2*(uint64_t)outs>(uint64_t)loaded.linearsize)
+    goto fail;
+   bann_setweight(&loaded,i,ins,outs,loaded.linear+(size_t)used,flags,0);
+   used+=count;
+   total+=count+2*(uint64_t)outs;
+  }
+ if(used!=(uint64_t)usedlinearsize || total!=(uint64_t)loaded.linearsize)
+  goto fail;
+ for(i=0;i<layercount;i++)
+  {
+   bann_setweighttemp(&loaded,i,loaded.linear+used);
+   used+=2*(uint64_t)loaded.weights[i].outs;
+  }
+#if defined(BANN_RNN)
+ loaded.rweights=loaded.weights+loaded.weightscount;
+ memset(loaded.rweights->o,0,loaded.rweights->outs*sizeof(real));
+#endif
+ bann_buildsigmoidcache();
+ *net=loaded;
+ return 1;
+
+fail:
+ bann_delete(&loaded);
+ return 0;
 }
 int  bann_read(bann*net,const char*file)
 {

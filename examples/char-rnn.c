@@ -24,7 +24,7 @@ int id2ch[MAX_CHARS];
 int char_get(const char*sz,int*step)
 {
  if(step) *step=1;
- return (int)(unsigned char*)sz[0];
+ return (unsigned char)sz[0];
 }
 
 int bann_gethighestoutput(bann*net)
@@ -47,12 +47,21 @@ int createnetfromtextfile(bann*N,const char*file,char**text,size_t*psize,int*pvo
  {
   byte   used[MAX_CHARS]; // one byte for char - change that AND char_get to use utf8
   size_t size,i,needed,pos;
-  fseek(f,0,2);
-  size=ftell(f);
-  (*text)=(char*)malloc(size);
+  long length;
+  if(fseek(f,0,SEEK_END)!=0 || (length=ftell(f))<2 || fseek(f,0,SEEK_SET)!=0)
+   {
+    fclose(f);
+    return 0;
+   }
+  size=(size_t)length;
+  *text=(char*)malloc(size);
+  if(!*text || fread(*text,1,size,f)!=size)
+   {
+    free(*text);
+    fclose(f);
+    return 0;
+   }
   (*psize)=size;
-  fseek(f,0,0);
-  fread((*text),1,size,f);
   fclose(f);
 
   memset(used,0,sizeof(used));
@@ -145,14 +154,14 @@ void generatetext(bann*N,int hm,int e)
   printf("%d: %s\n\n",e,output);
 }
 
-int main()
+int main(int argc,char**argv)
 {
  bann   N; 
  char*  file;
  int    vocab_size;
  size_t i,size;
 
- if(createnetfromtextfile(&N,"bin/data/text/skip_sherlock.txt",&file,&size,&vocab_size))
+ if(createnetfromtextfile(&N,argc>1 ? argv[1] : "bin/data/text/test.txt",&file,&size,&vocab_size))
   {
    int      e,I[2],O[2],good=0,bad=0,sel,turn=0;   
    real     smoothloss;
@@ -165,15 +174,23 @@ int main()
    printf("training...\n");
    // timed output values
    bannrnn_new(&hlp,&N,seqlen);
+   if(!hlp.seqlen)
+    {
+     fprintf(stderr,"Could not initialize the recurrent training buffers.\n");
+     bann_delete(&N);
+     free(file);
+     return 1;
+    }
 
-   smoothloss=-logf(1.0f/vocab_size)*seqlen;	// inital loss
+   smoothloss=-logf(1.0f/vocab_size);
 
    for(e=0;(e<MAX_EPOCHS)&&(smoothloss>ERRORLEVEL);e++)
     {                    
      i=0;
-     while(i<size-seqlen)
+     while(i+1<size)
       {
        real loss=0,err=0;
+       seqlen=size-i-1<SEQLEN ? size-i-1 : SEQLEN;
 
        // forward pass using rnn
        bannrnn_start(&hlp,&N,(i==0));
@@ -182,8 +199,8 @@ int main()
        for(s=0;s<seqlen;s++)
         {
          real*output;
-         int  outid=ch2id[file[i+s+1]];
-         trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=ch2id[file[i+s]]; 
+         int  outid=ch2id[(unsigned char)file[i+s+1]];
+         trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=ch2id[(unsigned char)file[i+s]];
          trainO.idx->hotcnt=1;trainO.idx->hotpos[0]=outid; 
          // save previous state
          // --- bannrnn_hprev(&hlp,&N,s,bannrnn_push);
@@ -192,38 +209,38 @@ int main()
          // save output state
          bannrnn_hidout(&hlp,&N,s,bannrnn_push);
          if((N.weights[1].flags&7)==bann_activation_softmax)
-          loss+=-logf(output[outid]);
+          loss+=-logf(fmaxf(output[outid],FLT_MIN));
          else
           loss+=0.5f*(1-output[outid])*(1-output[outid]);
         }
        // save last hidden output
-       bannrnn_hprev(&hlp,&N,seqlen,bannrnn_push);
+       bannrnn_hprev(&hlp,&N,SEQLEN,bannrnn_push);
 
-       smoothloss = smoothloss * 0.999f + loss * 0.001f;
+       smoothloss = smoothloss * 0.999f + (loss/seqlen) * 0.001f;
 
        // backward pass - back propagation thru time 
-       while(s--)
+       while(s>0)
         {
-         trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=ch2id[file[i+s]];         
-         trainO.idx->hotcnt=1;trainO.idx->hotpos[0]=ch2id[file[i+s+1]];
+         --s;
+         trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=ch2id[(unsigned char)file[i+s]];
+         trainO.idx->hotcnt=1;trainO.idx->hotpos[0]=ch2id[(unsigned char)file[i+s+1]];
          err+=bannrnn_backward(&hlp,&N,s,&trainI,&trainO);
         }
        bannrnn_updatenntraining(&hlp,&N,err,seqlen);
        
        // restore last hidden output
-       bannrnn_hprev(&hlp,&N,seqlen,bannrnn_pull);              
+       bannrnn_hprev(&hlp,&N,SEQLEN,bannrnn_pull);
        i+=seqlen;
 
        turn++;
 
        if((turn&0x7F)==0x7F)
         {
-         printf("epochs: %d - pos: %d/%d - loss: %.2f \r",e,i,size,smoothloss);
+         printf("epochs: %d - pos: %zu/%zu - loss: %.2f \r",e,i,size,smoothloss);
          printf("\ngenerating: ");
           
-         bannrnn_hprev(&hlp,&N,s,bannrnn_push);       
          generatetext(&N,64,-1);
-         bannrnn_hprev(&hlp,&N,s,bannrnn_pull);
+         bannrnn_hprev(&hlp,&N,SEQLEN,bannrnn_pull);
         }
         
       }
@@ -237,10 +254,10 @@ int main()
    bannrnn_start(NULL,&N,1);
    for(i=0;i<size-1;i++)
     {     
-     trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=ch2id[file[i]];
+     trainI.idx->hotcnt=1;trainI.idx->hotpos[0]=ch2id[(unsigned char)file[i]];
      bann_predict(&N,&trainI);
      sel=bann_gethighestoutput(&N);
-     if(id2ch[sel]==file[i+1])
+     if(id2ch[sel]==(unsigned char)file[i+1])
       good++;
      else
       bad++;
@@ -250,6 +267,8 @@ int main()
    i=0;
    bann_delete(&N);
    free(file);
+   return 0;
   }
+ fprintf(stderr,"Could not read a training corpus.\n");
  return 1;
 }

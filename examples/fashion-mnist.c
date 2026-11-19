@@ -155,10 +155,10 @@ int main()
     index[sample]=sample;
 
    // training
-   in.kind=standard;
+   in.kind=iokind_standard;
    in.linear=(real*)malloc(sizeof(in.linear[0])*mnist_size);
 
-   out.kind=idx;
+   out.kind=iokind_idx;
 
    bo.hotpos=&tmp[0];
    bo.hotcnt=1;
@@ -238,7 +238,7 @@ int main()
                     &trainingset,&trainingoutput);
 
      // test
-     in.kind=standard;
+     in.kind=iokind_standard;
      in.linear=(real*)malloc(sizeof(in.linear[0])*mnist_size);
 
      for(sample=0;sample<mnist_sample;sample++)

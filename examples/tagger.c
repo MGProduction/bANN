@@ -1009,10 +1009,10 @@ int main(int argc,const char*argv[])
   }
  
  // set INPUT&OUTPUT bann_io
- in.kind=idx;in.idx=&a;
+ in.kind=iokind_idx;in.idx=&a;
  a.hotpos=&inw[0];
 
- out.kind=idx;out.idx=&b;
+ out.kind=iokind_idx;out.idx=&b;
  b.hotpos=&o[0];
 
  // create index array (for shuffle)

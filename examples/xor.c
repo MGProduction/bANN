@@ -25,8 +25,8 @@ int main()
  bann_new(&N,2,2,1,1);
  bann_setlearningrate(&N,3.0f,bann_optimizer_off,32);
 
- in.kind=standard;
- out.kind=standard;
+ in.kind=iokind_standard;
+ out.kind=iokind_standard;
 
  for(e=0;e<xor_maxepoch;e++)
   for(v=0;v<4;v++)
@@ -74,5 +74,5 @@ int main()
    bannQ_delete(&NQ); 
   }
 
- return 1;
+ return 0;
 }

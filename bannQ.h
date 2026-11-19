@@ -31,11 +31,11 @@ typedef float         real;
 typedef unsigned char byte;
 
 #if !defined(BANN_IO_DEFINED)
-enum {
- standard=0,
- idx=1,
- fidx=2,
-}bann_iokind;
+enum bann_iokind{
+ iokind_standard=0,
+ iokind_idx=1,
+ iokind_fidx=2,
+};
 
 typedef struct{
  int*hotpos;
@@ -78,6 +78,7 @@ typedef struct{
 // nnet struct
 typedef struct{
  weightQ*weights;
+ weightQ*rweights;
  int     weightscount;
  int     linearsize;
  real   *linear;
@@ -87,6 +88,7 @@ typedef struct{
 int  bannQ_read(bannQ*net,const char*file);
 real*bannQ_predict(bannQ*net,bann_io*input);
 void bannQ_delete(bannQ*net);
+void bannQ_reset(bannQ*net);
 
 // ---------------------------------------------------------------------
 
@@ -95,12 +97,14 @@ void bannQ_delete(bannQ*net);
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
-#include <float.h>
+#include <stdint.h>
+#include <stdlib.h>
 
 #define bannQ_activation_sigmoid   0
 #define bannQ_activation_linear    1
 #define bannQ_activation_relu      2
 #define bannQ_activation_tanh      3
+#define bannQ_activation_softmax   4
 
 #define bannQ_8bit                 1
 
@@ -173,6 +177,7 @@ void bannQ_enableweightactivation(bannQ*net,int layernumber)
    net->weights[layernumber].activation=bannQ_sigmoid;
    break;
   case bannQ_activation_linear:
+  case bannQ_activation_softmax:
    net->weights[layernumber].activation=bannQ_linear;
    break;
   case bannQ_activation_relu:
@@ -203,59 +208,80 @@ byte*bannQ_setweight(bannQ*net,int layernumber,int ins,int outs,byte*ptr,real ba
  return ptr;
 }
 
-real*bannQ_setweighttemp(bannQ*net,int layernumber,real*ptr)
+int bannQ_coreread(bannQ*net,FILE*f)
 {
- weightQ*w=&net->weights[layernumber];
- w->o=ptr;
- ptr+=w->outs;
- ptr+=w->ins;  
- return ptr;
-}
-
-// bann read
-int  bannQ_coreread(bannQ*net,FILE*f)
-{
- int  version,ret=0,way;
+ bannQ loaded={0};
+ int version,way,storedsize,usedlinearsize,layercount,i;
+ uint64_t used=0,outputs=0;
+ real base,scale;
  char magic[4];
- if((fread(magic,4,1,f)==1)&&(fread(&version,sizeof(version),1,f)==1)&&(memcmp(magic,"BANN",4)==0)&&(version==1))
+
+ if(fread(magic,4,1,f)!=1 || memcmp(magic,"BANN",4)!=0 ||
+    fread(&version,sizeof(version),1,f)!=1 || (version!=1 && version!=2) ||
+    fread(&way,sizeof(way),1,f)!=1 || way!=bannQ_8bit ||
+    fread(&storedsize,sizeof(storedsize),1,f)!=1 ||
+    fread(&usedlinearsize,sizeof(usedlinearsize),1,f)!=1 ||
+    usedlinearsize<=0 || storedsize<=usedlinearsize ||
+    fread(&base,sizeof(base),1,f)!=1 || !isfinite(base) ||
+    fread(&scale,sizeof(scale),1,f)!=1 || !isfinite(scale) || scale<0)
+  return 0;
+
+ loaded.blinear=(byte*)malloc((size_t)usedlinearsize);
+ if(!loaded.blinear ||
+    fread(loaded.blinear,1,usedlinearsize,f)!=(size_t)usedlinearsize ||
+    fread(&layercount,sizeof(layercount),1,f)!=1 ||
+    layercount<version+1 || layercount>usedlinearsize ||
+    (size_t)layercount>SIZE_MAX/sizeof(weightQ))
+  goto fail;
+ loaded.weightscount=layercount-(version==2);
+ loaded.weights=(weightQ*)malloc((size_t)layercount*sizeof(weightQ));
+ if(!loaded.weights)
+  goto fail;
+
+ for(i=0;i<layercount;i++)
   {
-   real*ptr,base,scale;
-   byte*bptr;
-   int  i,usedlinearsize;
-
-   memset(net,0,sizeof(bannQ));
-
-   fread(&way,sizeof(way),1,f);
-   if(way!=bannQ_8bit)
-    return 0;
-
-   fread(&net->linearsize,sizeof(net->linearsize),1,f);
-   fread(&usedlinearsize,sizeof(usedlinearsize),1,f);
-
-   ptr=net->linear=(real*)malloc( (net->linearsize-usedlinearsize) * sizeof(net->linear[0]) );
-   bptr=net->blinear=(byte*)malloc( usedlinearsize * sizeof(net->blinear[0]) );
-
-   fread(&base,sizeof(base),1,f);fread(&scale,sizeof(scale),1,f);
-   fread(net->blinear,sizeof(net->blinear[0]),usedlinearsize,f);
-
-   // read net weight structure and fill it
-   fread(&net->weightscount,sizeof(net->weightscount),1,f);          
-   net->weights=(weightQ*)malloc( net->weightscount * sizeof(net->weights[0]) );
-   for(i=0;i<net->weightscount;i++)
-    {
-     int ins,outs,flags;
-     fread(&ins,sizeof(ins),1,f);
-     fread(&outs,sizeof(outs),1,f);
-     fread(&flags,sizeof(flags),1,f);
-     bptr=bannQ_setweight(net,i,ins,outs,bptr,base,scale,flags);
-    }
-   for(i=0;i<net->weightscount;i++)
-    ptr=bannQ_setweighttemp(net,i,ptr);
-   // build sigmoid table
-   bannQ_buildsigmoidcache();
-   ret=1;
+   int ins,outs,flags;
+   uint64_t count;
+   if(fread(&ins,sizeof(ins),1,f)!=1 || fread(&outs,sizeof(outs),1,f)!=1 ||
+      fread(&flags,sizeof(flags),1,f)!=1 || ins<=0 || outs<=0 ||
+      (flags&7)>bannQ_activation_softmax)
+    goto fail;
+   if(i && i<loaded.weightscount && loaded.weights[i-1].outs!=ins)
+    goto fail;
+   if(i==loaded.weightscount && (ins!=loaded.weights[0].outs || outs!=ins))
+    goto fail;
+   count=((uint64_t)ins+1)*outs;
+   if(used+count>(uint64_t)usedlinearsize ||
+      used+count+2*(outputs+outs)>(uint64_t)storedsize)
+    goto fail;
+   bannQ_setweight(&loaded,i,ins,outs,loaded.blinear+used,base,scale,flags);
+   used+=count;
+   outputs+=outs;
   }
- return ret;
+ if(used!=(uint64_t)usedlinearsize || used+2*outputs!=(uint64_t)storedsize ||
+    outputs>SIZE_MAX/sizeof(real))
+  goto fail;
+
+ loaded.linearsize=(int)outputs;
+ loaded.linear=(real*)calloc((size_t)outputs,sizeof(real));
+ if(!loaded.linear)
+  goto fail;
+ outputs=0;
+ for(i=0;i<layercount;i++)
+  {
+   loaded.weights[i].o=loaded.linear+outputs;
+   outputs+=loaded.weights[i].outs;
+  }
+ if(version==2)
+  loaded.rweights=&loaded.weights[loaded.weightscount];
+
+ bannQ_buildsigmoidcache();
+ *net=loaded;
+ return 1;
+
+fail:
+ bannQ_delete(&loaded);
+ return 0;
 }
 int  bannQ_read(bannQ*net,const char*file)
 {
@@ -270,50 +296,75 @@ int  bannQ_read(bannQ*net,const char*file)
   return 0;
 }
 
-// bann execution
-#define nnQ_getweight(net,l,r,c) (net->weights[l].base+(net->weights[l].w[c*net->weights[l].ins+r]*net->weights[l].scale))
-#define nnQ_setoutput(net,l,c,v) net->weights[l].o[c]=v
+// Decode one row at a time, keeping only the activations in float.
 real*bannQ_predict(bannQ*net,bann_io*input)
 {
- int  i,j,l;
- // from input layer to output one
- // v values are written on the next lever
+ int i,j,l;
  for(l=0;l<net->weightscount;l++)
   {
-   real bias=net->weights[l].base+(net->weights[l].bias[0]*net->weights[l].scale);
-   for(i=0;i<net->weights[l].outs;i++)
+   weightQ*w=&net->weights[l];
+   for(i=0;i<w->outs;i++)
     {
-     real sum=0.0f;
-     if(l==0)      
+     const byte*row=w->w+(size_t)i*w->ins;
+     real sum=-(w->base+w->bias[i]*w->scale);
+     if(l==0)
       {
-       // use input instead of previous hidden state
        switch(input->kind)
         {
-         case standard:
-          for(j=0;j<net->weights[l].ins;j++)             
-           sum+=input->linear[j]*nnQ_getweight(net,l,j,i);       
-         break;
-         case idx:
-          for(j=0;j<input->idx->hotcnt;j++)        
-           sum+=nnQ_getweight(net,l,input->idx->hotpos[j],i);       
+         case iokind_standard:
+          for(j=0;j<w->ins;j++)
+           sum+=input->linear[j]*(w->base+row[j]*w->scale);
           break;
-         case fidx:
-          for(j=0;j<input->fidx->hotcnt;j++)        
-           sum+=input->fidx->hotval[j]*nnQ_getweight(net,l,input->fidx->hotpos[j],i);       
+         case iokind_idx:
+          for(j=0;j<input->idx->hotcnt;j++)
+           sum+=w->base+row[input->idx->hotpos[j]]*w->scale;
           break;
+         case iokind_fidx:
+          for(j=0;j<input->fidx->hotcnt;j++)
+           sum+=input->fidx->hotval[j]*(w->base+row[input->fidx->hotpos[j]]*w->scale);
+          break;
+        }
+       if(net->rweights)
+        {
+         weightQ*recurrent=net->rweights;
+         const byte*recurrent_row=recurrent->w+(size_t)i*recurrent->ins;
+         for(j=0;j<recurrent->ins;j++)
+          sum+=recurrent->o[j]*(recurrent->base+recurrent_row[j]*recurrent->scale);
+         sum-=recurrent->base+recurrent->bias[i]*recurrent->scale;
         }
       }
      else
       {
-       for(j=0;j<net->weights[l].ins;j++)
-        sum+=net->weights[l-1].o[j]*nnQ_getweight(net,l,j,i);
+       for(j=0;j<w->ins;j++)
+        sum+=net->weights[l-1].o[j]*(w->base+row[j]*w->scale);
       }
-     nnQ_setoutput(net,l,i,net->weights[l].activation(sum+bias));
+     w->o[i]=w->activation(sum);
+    }
+   if((w->flags&7)==bannQ_activation_softmax)
+    {
+     real max=w->o[0],sum=0;
+     for(i=1;i<w->outs;i++)
+      if(w->o[i]>max)
+       max=w->o[i];
+     for(i=0;i<w->outs;i++)
+      {
+       w->o[i]=expf(w->o[i]-max);
+       sum+=w->o[i];
+      }
+     for(i=0;i<w->outs;i++)
+      w->o[i]/=sum;
     }
   }
-  return net->weights[l-1].o;
+ if(net->rweights)
+  memcpy(net->rweights->o,net->weights[0].o,net->rweights->outs*sizeof(real));
+ return net->weights[l-1].o;
 }
 
+void bannQ_reset(bannQ*net)
+{
+ if(net->rweights)
+  memset(net->rweights->o,0,net->rweights->outs*sizeof(real));
+}
 // nnet delete
 void bannQ_delete(bannQ*net)
 {
